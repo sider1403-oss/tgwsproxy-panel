@@ -236,41 +236,21 @@ def _setup_code_path():
 
 
 def ensure_setup_state() -> None:
-    """Create a one-time setup code while no admin exists; remove it afterwards."""
+    """First-run page is open while there is no admin; remove the legacy setup code."""
     settings.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     try:
         settings.CONFIG_DIR.chmod(0o700)
     except OSError:
         pass
-    path = _setup_code_path()
-    if setup_required():
-        if not path.exists():
-            path.write_text(secrets.token_urlsafe(9), encoding="utf-8")
-            try:
-                path.chmod(0o600)
-            except OSError:
-                pass
-            logutil.append("admin setup required: read /opt/tgws-panel/config/setup_code over SSH")
-    else:
-        try:
-            path.unlink()
-        except OSError:
-            pass
-
-
-def check_setup_code(code: str) -> bool:
     try:
-        expected = _setup_code_path().read_text(encoding="utf-8").strip()
+        _setup_code_path().unlink()
     except OSError:
-        return False
-    return bool(expected) and secrets.compare_digest(expected, (code or "").strip())
+        pass
 
 
-def finish_setup(username: str, password: str, code: str) -> dict:
+def finish_setup(username: str, password: str) -> dict:
     if not setup_required():
         raise ValueError("Администратор уже создан")
-    if not check_setup_code(code):
-        raise ValueError("Неверный код первоначальной настройки")
     user = create_admin(username, password, must_change=False)
     try:
         _setup_code_path().unlink()

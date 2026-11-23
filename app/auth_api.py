@@ -11,8 +11,6 @@ from . import security
 
 router = APIRouter()
 
-SETUP_CODE_HINT = "/opt/tgws-panel/config/setup_code"
-
 
 def _user_public(user: dict) -> dict:
     return {
@@ -47,7 +45,6 @@ def auth_status(request: Request, response: Response):
         "authenticated": False,
         "user": None,
         "csrf": pre,
-        "setup_code_hint": SETUP_CODE_HINT if security.setup_required() else None,
     }
 
 
@@ -60,11 +57,10 @@ def auth_setup(request: Request, response: Response, payload: dict = Body(...)):
     if blocked:
         security.log_event("setup_blocked", request, detail=f"retry={retry}")
         raise HTTPException(429, "Слишком много попыток. Повторите позже", headers={"Retry-After": str(retry)})
-    code = str(payload.get("code") or "")
     username = str(payload.get("username") or "").strip()
     password = str(payload.get("password") or "")
     try:
-        user = security.finish_setup(username, password, code)
+        user = security.finish_setup(username, password)
     except ValueError as exc:
         security.record_attempt(ip, "__setup__", False)
         security.log_event("setup_failed", request, username=username, detail=str(exc))

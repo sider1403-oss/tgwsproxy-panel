@@ -7,8 +7,8 @@ raw socket for device fingerprinting) and is intended for a trusted LAN.
 
 Since v1.1.0 the panel requires a login:
 
-- one administrator, created by a one-time setup code (`config/setup_code`) or the
-  `tgws-panel-admin create-admin` CLI;
+- one administrator, created from the first-run page (the administrator chooses the
+  password) or the `tgws-panel-admin create-admin` CLI;
 - Argon2id password hashes, server-side sessions in SQLite, CSRF protection,
   login rate limiting and a security journal;
 - session cookies are `HttpOnly`, `SameSite=Lax` and `Secure` when HTTPS is detected;

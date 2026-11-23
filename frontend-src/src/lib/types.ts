@@ -194,7 +194,6 @@ export interface AuthStatus {
   authenticated: boolean
   user: AuthUser | null
   csrf: string
-  setup_code_hint?: string | null
 }
 
 export interface SessionInfo {
