@@ -6,11 +6,10 @@ type AuthContextValue = {
   loading: boolean
   user: AuthUser | null
   setupRequired: boolean
-  setupCodeHint: string | null
   csrf: string
   refresh: () => Promise<void>
   login: (username: string, password: string) => Promise<void>
-  setup: (code: string, username: string, password: string) => Promise<void>
+  setup: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   changePassword: (current: string, next: string) => Promise<void>
 }
@@ -31,7 +30,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [user, setUser] = useState<AuthUser | null>(null)
   const [setupRequired, setSetupRequired] = useState(false)
-  const [setupCodeHint, setSetupCodeHint] = useState<string | null>(null)
   const [csrf, setCsrf] = useState('')
 
   const apply = useCallback((data: AuthStatus) => {
@@ -39,7 +37,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCsrf(data.csrf || '')
     setUser(data.user)
     setSetupRequired(!!data.setup_required)
-    setSetupCodeHint(data.setup_code_hint ?? null)
   }, [])
 
   const refresh = useCallback(async () => {
@@ -85,12 +82,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSetupRequired(false)
   }, [])
 
-  const setup = useCallback(async (code: string, username: string, password: string) => {
+  const setup = useCallback(async (username: string, password: string) => {
     const res = await fetch('/api/auth/setup', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-      body: JSON.stringify({ code, username, password }),
+      body: JSON.stringify({ username, password }),
     })
     if (!res.ok) throw new Error(await readError(res))
     const data = await res.json()
@@ -120,8 +117,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   const value = useMemo(
-    () => ({ loading, user, setupRequired, setupCodeHint, csrf, refresh, login, setup, logout, changePassword }),
-    [loading, user, setupRequired, setupCodeHint, csrf, refresh, login, setup, logout, changePassword],
+    () => ({ loading, user, setupRequired, csrf, refresh, login, setup, logout, changePassword }),
+    [loading, user, setupRequired, csrf, refresh, login, setup, logout, changePassword],
   )
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>
