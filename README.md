@@ -1,5 +1,7 @@
 # tgwsproxy-panel
 
+[![CI](https://github.com/sider1403-oss/tgwsproxy-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/sider1403-oss/tgwsproxy-panel/actions/workflows/ci.yml)
+
 Веб-панель администрирования для уже работающего
 [Telegram WebSocket Proxy](https://github.com/valnesfjord/tg-ws-proxy-rs)
 (`tg-ws-proxy-rs`, контейнер `tgwsproxy`) на базе Docker Compose.
@@ -64,7 +66,7 @@ Backend работает одним процессом, слушает `0.0.0.0:
 ## Установка
 
 ```bash
-sudo git clone https://github.com/<owner>/tgwsproxy-panel.git /opt/tgws-panel
+sudo git clone https://github.com/sider1403-oss/tgwsproxy-panel.git /opt/tgws-panel
 cd /opt/tgws-panel
 
 sudo python3 -m venv venv
