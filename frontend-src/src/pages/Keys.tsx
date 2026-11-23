@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, BarChart3, Eye, EyeOff, KeyRound, Plus, Power, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertTriangle, BarChart3, Eye, KeyRound, Plus, Power, RefreshCw, Trash2 } from 'lucide-react'
 import type { KeyItem, KeysResponse } from '../lib/types'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/format'
 import { Badge, Button, Card, ConfirmDialog, CopyBtn, Dialog, Empty, Field, Input, useToast } from '../components/ui'
 
 type Pending = { type: 'disable' | 'delete'; key: KeyItem } | null
+type Revealed = { key: string; masked: string; link_lan: string | null; link_external: string | null }
 
 export default function Keys() {
   const [data, setData] = useState<KeysResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [addOpen, setAddOpen] = useState(false)
   const [newComment, setNewComment] = useState('')
   const [newLink, setNewLink] = useState<string | null>(null)
@@ -22,6 +22,10 @@ export default function Keys() {
   const [commentText, setCommentText] = useState('')
   const [statsKey, setStatsKey] = useState<KeyItem | null>(null)
   const [statsText, setStatsText] = useState<string>('')
+  const [revealKey, setRevealKey] = useState<KeyItem | null>(null)
+  const [revealPassword, setRevealPassword] = useState('')
+  const [revealed, setRevealed] = useState<Revealed | null>(null)
+  const [revealBusy, setRevealBusy] = useState(false)
   const { push } = useToast()
 
   const load = useCallback(async () => {
@@ -45,7 +49,7 @@ export default function Keys() {
   const doDisable = async (k: KeyItem) => {
     setBusy(true)
     try {
-      const r = await api.disableKey(k.key)
+      const r = await api.disableKey(k.id)
       if (!r.ok) throw new Error(r.error || 'Ошибка')
       push('ok', 'Ключ отключён — контейнер перезапущен')
       await load()
@@ -60,7 +64,7 @@ export default function Keys() {
   const doDelete = async (k: KeyItem) => {
     setBusy(true)
     try {
-      const r = await api.deleteKey(k.key)
+      const r = await api.deleteKey(k.id)
       if (!r.ok) throw new Error(r.error || 'Ошибка')
       push('ok', 'Ключ удалён — контейнер перезапущен')
       await load()
@@ -75,7 +79,7 @@ export default function Keys() {
   const doEnable = async (k: KeyItem) => {
     setBusy(true)
     try {
-      const r = await api.enableKey(k.key)
+      const r = await api.enableKey(k.id)
       if (!r.ok) throw new Error(r.error || 'Ошибка')
       push('ok', 'Ключ включён — контейнер перезапущен')
       await load()
@@ -109,7 +113,7 @@ export default function Keys() {
     if (!commentEdit) return
     setBusy(true)
     try {
-      await api.setComment(commentEdit.key, commentText)
+      await api.setComment(commentEdit.id, commentText)
       push('ok', 'Комментарий сохранён')
       setCommentEdit(null)
       await load()
@@ -123,10 +127,30 @@ export default function Keys() {
   const showStats = async (k: KeyItem) => {
     setStatsKey(k)
     try {
-      const s = await fetch(`/api/keys/${k.key}/stats`).then((r) => r.json())
+      const s = await api.keyStats(k.id)
       setStatsText(s.reason ?? 'Статистика недоступна')
     } catch {
       setStatsText('Не удалось получить статистику')
+    }
+  }
+
+  const openReveal = (k: KeyItem) => {
+    setRevealKey(k)
+    setRevealPassword('')
+    setRevealed(null)
+  }
+
+  const doReveal = async () => {
+    if (!revealKey) return
+    setRevealBusy(true)
+    try {
+      const r = await api.revealKey(revealKey.id, revealPassword)
+      setRevealed(r)
+      setRevealPassword('')
+    } catch (e) {
+      push('bad', e instanceof Error ? e.message : 'Не удалось показать секрет')
+    } finally {
+      setRevealBusy(false)
     }
   }
 
@@ -199,14 +223,12 @@ export default function Keys() {
             </thead>
             <tbody>
               {(data?.keys ?? []).map((k) => (
-                <tr key={k.key} className="border-b border-line/40 hover:bg-ink/[0.03]">
+                <tr key={k.id} className="border-b border-line/40 hover:bg-ink/[0.03]">
                   <td className="td">
                     <div className="flex items-center gap-2">
-                      <code className="rounded-md border border-line bg-ink/[0.07] px-2 py-1 text-[11px]">
-                        {revealed[k.key] ? k.key : k.masked}
-                      </code>
-                      <button className="text-muted hover:text-ink" onClick={() => setRevealed((s) => ({ ...s, [k.key]: !s[k.key] }))} title="Показать/скрыть">
-                        {revealed[k.key] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      <code className="rounded-md border border-line bg-ink/[0.07] px-2 py-1 text-[11px]">{k.masked}</code>
+                      <button className="text-muted hover:text-ink" onClick={() => openReveal(k)} title="Показать ключ и ссылки (нужен пароль)">
+                        <Eye className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   </td>
@@ -222,15 +244,16 @@ export default function Keys() {
                       {k.link_lan ? (
                         <div className="flex items-center gap-2">
                           <Badge tone="info">LAN</Badge>
-                          <CopyBtn value={k.link_lan} label="Копировать" />
-                          <span className="max-w-[190px] truncate font-mono text-[10px] text-muted">{k.link_lan}</span>
+                          <span className="max-w-[210px] truncate font-mono text-[10px] text-muted">{k.link_lan}</span>
                         </div>
                       ) : null}
                       <div className="flex items-center gap-2">
                         <Badge tone="muted">Интернет</Badge>
-                        <CopyBtn value={k.link_external ?? k.link} label="Копировать" />
-                        <span className="max-w-[190px] truncate font-mono text-[10px] text-muted">{k.link_external ?? k.link}</span>
+                        <span className="max-w-[210px] truncate font-mono text-[10px] text-muted">{k.link_external}</span>
                       </div>
+                      <Button className="!px-2 !py-1 text-[11px]" onClick={() => openReveal(k)}>
+                        <Eye className="h-3 w-3" /> Показать с паролем
+                      </Button>
                     </div>
                   </td>
                   <td className="td">
@@ -263,7 +286,7 @@ export default function Keys() {
           </div>
           <div className="space-y-2">
             {data.disabled.map((k) => (
-              <div key={k.key} className="flex flex-wrap items-center gap-3 rounded-xl border border-line/60 bg-ink/5 px-3 py-2">
+              <div key={k.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-line/60 bg-ink/5 px-3 py-2">
                 <code className="text-[11px] text-muted">{k.masked}</code>
                 <span className="text-xs text-muted">{k.comment || 'без комментария'}</span>
                 <Badge tone="warn">отключён</Badge>
@@ -353,6 +376,63 @@ export default function Keys() {
             Прокси не записывает, каким секретом клиент прошёл авторизацию, поэтому связать подключения/трафик с ключом невозможно.
           </div>
         </div>
+      </Dialog>
+
+      <Dialog
+        open={!!revealKey}
+        onClose={() => { setRevealKey(null); setRevealed(null); setRevealPassword('') }}
+        title="Показать секрет ключа"
+        footer={<Button onClick={() => { setRevealKey(null); setRevealed(null); setRevealPassword('') }}>Закрыть</Button>}
+      >
+        {!revealed ? (
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void doReveal()
+            }}
+          >
+            <div className="rounded-lg border border-line bg-ink/5 px-3 py-2 font-mono text-[11px] text-muted">{revealKey?.masked}</div>
+            <Field label="Подтвердите паролем" hint="Просмотр полного ключа и ссылок фиксируется в журнале безопасности.">
+              <Input
+                type="password"
+                value={revealPassword}
+                onChange={(e) => setRevealPassword(e.target.value)}
+                autoFocus
+                autoComplete="current-password"
+                required
+              />
+            </Field>
+            <Button type="submit" variant="primary" loading={revealBusy} disabled={!revealPassword}>
+              Показать
+            </Button>
+          </form>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted">Ключ</div>
+              <div className="mt-1 flex items-center gap-2">
+                <code className="break-all rounded-lg border border-line bg-ink/5 px-2 py-1 text-[11px]">{revealed.key}</code>
+                <CopyBtn value={revealed.key} label="Копировать" />
+              </div>
+            </div>
+            {revealed.link_lan ? (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-muted">LAN-ссылка</div>
+                <div className="mt-1 break-all font-mono text-[11px]">{revealed.link_lan}</div>
+                <CopyBtn value={revealed.link_lan} label="Копировать LAN" />
+              </div>
+            ) : null}
+            {revealed.link_external ? (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-muted">Внешняя ссылка</div>
+                <div className="mt-1 break-all font-mono text-[11px]">{revealed.link_external}</div>
+                <CopyBtn value={revealed.link_external} label="Копировать внешнюю" />
+              </div>
+            ) : null}
+            <div className="text-[11px] text-muted">Не передавайте ссылку посторонним: она содержит секрет прокси.</div>
+          </div>
+        )}
       </Dialog>
 
       <ConfirmDialog

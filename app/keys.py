@@ -1,6 +1,8 @@
 """Manage the MTProto proxy secrets (keys) stored in the proxy's own config."""
 from __future__ import annotations
 
+import hashlib
+import re
 import secrets as pysecrets
 
 from . import config_editor, db, settings
@@ -21,6 +23,17 @@ def key_of(raw: str) -> str | None:
     else:
         candidate = s[:32] if len(s) > 32 else s
     return candidate.lower() if len(candidate) == 32 else None
+
+
+def key_id(key: str) -> str:
+    """Stable opaque identifier so the list API never returns the secret itself."""
+    return hashlib.sha256(key.lower().encode("utf-8")).hexdigest()[:16]
+
+
+def mask_link(link: str | None) -> str | None:
+    if not link:
+        return None
+    return re.sub(r"(secret=)[^&]+", r"\1********", link)
 
 
 def link_for(key: str, env: dict, host: str | None = None) -> str:
@@ -57,6 +70,31 @@ def links_for(key: str, env: dict) -> dict:
     }
 
 
+def public_links(key: str, env: dict) -> dict:
+    full = links_for(key, env)
+    return {
+        "link_lan": mask_link(full["link_lan"]),
+        "link_external": mask_link(full["link_external"]),
+    }
+
+
+def resolve_key(identifier: str) -> str | None:
+    """Resolve an opaque key id to the real secret (never expose this to clients)."""
+    identifier = (identifier or "").strip().lower()
+    if not identifier:
+        return None
+    env = config_editor.effective_env()
+    for raw in split_secrets(env.get("TG_SECRET")):
+        key = key_of(raw)
+        if key and key_id(key) == identifier:
+            return key
+    for row in db.query("SELECT key FROM key_meta"):
+        key = str(row["key"]).lower()
+        if key_id(key) == identifier:
+            return key
+    return None
+
+
 def _meta(key: str) -> dict:
     row = db.query_one("SELECT comment, created_at, disabled FROM key_meta WHERE key=?", (key,))
     if row:
@@ -77,12 +115,12 @@ def list_keys() -> dict:
         meta = _meta(key)
         active.append(
             {
-                "key": key,
+                "id": key_id(key),
                 "masked": key[:4] + "…" + key[-4:],
                 "enabled": True,
                 "comment": meta["comment"],
                 "created_at": meta["created_at"],
-                **links_for(key, env),
+                **public_links(key, env),
             }
         )
     disabled = []
@@ -91,12 +129,12 @@ def list_keys() -> dict:
             continue
         disabled.append(
             {
-                "key": row["key"],
+                "id": key_id(row["key"]),
                 "masked": row["key"][:4] + "…" + row["key"][-4:],
                 "enabled": False,
                 "comment": row["comment"] or "",
                 "created_at": row["created_at"],
-                **links_for(row["key"], env),
+                **public_links(row["key"], env),
             }
         )
     return {
@@ -113,7 +151,7 @@ def list_keys() -> dict:
         ),
         "lan_host": lan_host(),
         "external_host": (env.get("TG_LINK_IP") or "").strip() or lan_host() or settings.PUBLIC_HOST,
-        "link": link_for(active[0]["key"], env) if active else None,
+        "reveal_required": True,
     }
 
 
@@ -138,6 +176,7 @@ def add_key(comment: str = "") -> dict:
         (key, comment.strip(), db.now_iso()),
     )
     result["key"] = key
+    result["id"] = key_id(key)
     result.update(links_for(key, config_editor.effective_env()))
     return result
 

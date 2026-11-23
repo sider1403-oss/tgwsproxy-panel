@@ -36,6 +36,35 @@ PANEL_PORT = _env_int("PANEL_PORT", 8090)
 PUBLIC_HOST = _env("PANEL_PUBLIC_HOST", "127.0.0.1")
 PROXY_PORT = _env_int("TGWS_PROXY_PORT", 1443)
 
+# Authentication/session settings.
+SESSION_IDLE_MINUTES = _env_int("SESSION_IDLE_MINUTES", 60)
+SESSION_ABSOLUTE_HOURS = _env_int("SESSION_ABSOLUTE_HOURS", 12)
+
+# Only trust X-Forwarded-* when the direct peer is one of these proxies.
+# Comma-separated IPs/CIDRs, e.g. "127.0.0.1,10.0.0.0/8".
+TRUSTED_PROXIES = _env("PANEL_TRUSTED_PROXIES", "")
+
+# Extra allowed browser origins for CSRF checks (comma-separated), e.g.
+# "https://panel.example.com".
+ALLOWED_ORIGINS = _env("PANEL_ALLOWED_ORIGINS", "")
+
+
+def allowed_origins() -> set[str]:
+    port = PANEL_PORT
+    origins = {
+        f"http://{PUBLIC_HOST}:{port}",
+        f"https://{PUBLIC_HOST}:{port}",
+        f"http://localhost:{port}",
+        f"https://localhost:{port}",
+        f"http://127.0.0.1:{port}",
+        f"https://127.0.0.1:{port}",
+    }
+    for item in (ALLOWED_ORIGINS or "").split(","):
+        item = item.strip().rstrip("/")
+        if item:
+            origins.add(item)
+    return {x.rstrip("/") for x in origins}
+
 PROXY_URL = f"http://{PUBLIC_HOST}:{PANEL_PORT}"
 
 # How many days of samples/events to keep.

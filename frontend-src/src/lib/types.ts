@@ -142,9 +142,8 @@ export interface LogsResponse {
 }
 
 export interface KeyItem {
-  key: string
+  id: string
   masked: string
-  link: string
   link_lan?: string | null
   link_external?: string | null
   enabled: boolean
@@ -159,9 +158,9 @@ export interface KeysResponse {
   secret_source: string
   stats_supported: boolean
   stats_note: string
-  link: string | null
   lan_host?: string | null
   external_host?: string | null
+  reveal_required?: boolean
 }
 
 export interface ActionResult {
@@ -177,9 +176,57 @@ export interface ActionResult {
   port_check?: string
   warnings?: string[]
   key?: string
+  id?: string
   link?: string
   link_lan?: string | null
   link_external?: string | null
+}
+
+export interface AuthUser {
+  username: string
+  must_change_password: boolean
+  last_login_at?: string | null
+  last_login_ip?: string | null
+}
+
+export interface AuthStatus {
+  setup_required: boolean
+  authenticated: boolean
+  user: AuthUser | null
+  csrf: string
+  setup_code_hint?: string | null
+}
+
+export interface SessionInfo {
+  id: string
+  ip: string | null
+  user_agent: string | null
+  created_at: string
+  last_seen: string
+  expires_at: string
+  revoked: boolean
+  current: boolean
+}
+
+export interface SecurityEvent {
+  id: number
+  ts: string
+  event: string
+  username: string | null
+  ip: string | null
+  user_agent: string | null
+  detail: string | null
+}
+
+export interface SecurityOverview {
+  username: string
+  last_login_at: string | null
+  last_login_ip: string | null
+  failed_24h: number
+  active_sessions: number
+  last_failed: { ts: string; ip: string; username: string } | null
+  current_session: string
+  sessions: SessionInfo[]
 }
 
 export interface ServiceInfo {

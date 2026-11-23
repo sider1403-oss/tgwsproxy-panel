@@ -35,6 +35,9 @@ export default function Config() {
   const [result, setResult] = useState<ActionResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [restoreName, setRestoreName] = useState<string | null>(null)
+  const [downloadName, setDownloadName] = useState<string | null>(null)
+  const [downloadPassword, setDownloadPassword] = useState('')
+  const [downloadBusy, setDownloadBusy] = useState(false)
   const { push } = useToast()
 
   const load = async () => {
@@ -108,6 +111,29 @@ export default function Config() {
     } finally {
       setBusy(false)
       setRestoreName(null)
+    }
+  }
+
+  const doDownload = async () => {
+    if (!downloadName) return
+    setDownloadBusy(true)
+    try {
+      const blob = await api.downloadBackup(downloadName, downloadPassword)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${downloadName}.tar.gz`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      push('ok', 'Архив скачан')
+      setDownloadName(null)
+      setDownloadPassword('')
+    } catch (e) {
+      push('bad', e instanceof Error ? e.message : String(e))
+    } finally {
+      setDownloadBusy(false)
     }
   }
 
@@ -258,9 +284,9 @@ export default function Config() {
                     <td className="td font-mono text-[11px] text-muted">{b.name}</td>
                     <td className="td">
                       <div className="flex justify-end gap-2">
-                        <a className="btn-ghost !px-2.5 !py-1.5 text-xs" href={api.downloadBackup(b.name)}>
+                        <Button className="!px-2.5 !py-1.5 text-xs" onClick={() => { setDownloadName(b.name); setDownloadPassword('') }}>
                           <Download className="h-3.5 w-3.5" /> Скачать
-                        </a>
+                        </Button>
                         <Button variant="warn" className="!px-2.5 !py-1.5 text-xs" onClick={() => setRestoreName(b.name)}>
                           <Undo2 className="h-3.5 w-3.5" /> Восстановить
                         </Button>
@@ -320,6 +346,41 @@ export default function Config() {
         onClose={() => setRestoreName(null)}
         onConfirm={() => void restore()}
       />
+
+      <Dialog
+        open={!!downloadName}
+        onClose={() => setDownloadName(null)}
+        title="Скачать резервную копию"
+        footer={
+          <>
+            <Button onClick={() => setDownloadName(null)}>Отмена</Button>
+            <Button
+              variant="primary"
+              loading={downloadBusy}
+              disabled={!downloadPassword}
+              onClick={() => void doDownload()}
+            >
+              Скачать архив
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="text-xs text-muted">
+            Архив содержит <span className="font-mono">.env</span> прокси с TG_SECRET и создаётся
+            только после подтверждения паролем. Скачивание фиксируется в журнале безопасности.
+          </div>
+          <Field label="Подтвердите пароль">
+            <Input
+              type="password"
+              value={downloadPassword}
+              onChange={(e) => setDownloadPassword(e.target.value)}
+              autoFocus
+              autoComplete="current-password"
+            />
+          </Field>
+        </div>
+      </Dialog>
     </div>
   )
 }

@@ -281,7 +281,15 @@ def backup(tag: str) -> Path:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", tag)[:40] or "manual"
     dest = settings.BACKUP_DIR / f"{stamp}-{safe}"
     dest.mkdir(parents=True, exist_ok=True)
+    try:
+        dest.chmod(0o700)
+    except OSError:
+        pass
     shutil.copy2(settings.COMPOSE_FILE, dest / "docker-compose.yml")
+    try:
+        (dest / "docker-compose.yml").chmod(0o600)
+    except OSError:
+        pass
     if settings.ENV_FILE.exists():
         shutil.copy2(settings.ENV_FILE, dest / ".env")
         try:
@@ -290,6 +298,10 @@ def backup(tag: str) -> Path:
             pass
     meta = {"tag": tag, "created_at": db.now_iso(), "files": sorted(p.name for p in dest.iterdir())}
     (dest / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        (dest / "meta.json").chmod(0o600)
+    except OSError:
+        pass
     _prune_backups()
     return dest
 

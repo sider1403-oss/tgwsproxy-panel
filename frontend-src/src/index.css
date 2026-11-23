@@ -142,6 +142,13 @@ body {
   animation: fade-up 0.35s ease both;
 }
 
+.auth-bg {
+  background:
+    radial-gradient(1100px 600px at 12% -10%, var(--bg-glow-1), transparent 60%),
+    radial-gradient(900px 500px at 92% 8%, var(--bg-glow-2), transparent 60%),
+    rgb(var(--c-panel));
+}
+
 @keyframes pulse-dot {
   0%,
   100% {
