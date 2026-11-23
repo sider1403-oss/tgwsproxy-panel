@@ -6,31 +6,35 @@
 |---|---|---|---|
 | `main` | Стабильные релизы и деплой | — | — |
 | `develop` | Интеграция разработки | `main` | `main` через release/PR |
+| `fix` | Постоянная ветка исправления багов | `main` | `main`, затем `main` → `develop` |
 | `feature/<name>` | Новая функциональность | `develop` | `develop` |
-| `fix/<name>` | Исправление бага | `main` | `main`, затем `main` → `develop` |
 | `release/<version>` | Подготовка релиза | `develop` | `main`, затем обратно в `develop` |
 
 `main` и `develop` должны быть защищены в GitHub: PR, зелёный CI, запрет force-push.
-Короткоживущие ветки (`feature/*`, `fix/*`, `release/*`) удаляются после merge.
+`feature/*` и `release/*` — короткоживущие, удаляются после merge. Ветка `fix` постоянная:
+после каждого исправления синхронизируйте её с `main`.
 
 ## Исправление бага
 
 ```bash
-git checkout main
+git checkout fix
 git pull
-git checkout -b fix/short-description
 
 # правки, проверка
 git add -A
 git commit -m "Fix: short description"
-git push -u origin fix/short-description
+git push
 ```
 
-Откройте PR в `main`. После merge перенесите исправление в разработку:
+Откройте PR `fix` → `main`. После merge синхронизируйте ветки:
 
 ```bash
 git checkout develop
 git pull
+git merge main
+git push
+
+git checkout fix
 git merge main
 git push
 ```

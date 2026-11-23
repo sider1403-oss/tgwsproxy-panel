@@ -204,7 +204,7 @@ CI (`.github/workflows/ci.yml`) проверяет компиляцию Python �
 
 - `main` — стабильные релизы и деплой.
 - `develop` — интеграция разработки.
-- `fix/<name>` — исправления багов (PR в `main`, затем merge в `develop`).
+- `fix` — постоянная ветка исправлений багов (PR в `main`, затем merge в `develop`).
 - `feature/<name>` — новая функциональность (PR в `develop`).
 - `release/<version>` — подготовка релиза (PR в `main`, затем обратно в `develop`).
 
