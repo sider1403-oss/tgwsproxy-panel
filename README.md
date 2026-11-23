@@ -200,6 +200,17 @@ npm run dev
 
 CI (`.github/workflows/ci.yml`) проверяет компиляцию Python и сборку фронтенда.
 
+## Ветки и разработка
+
+- `main` — стабильные релизы и деплой.
+- `develop` — интеграция разработки.
+- `fix/<name>` — исправления багов (PR в `main`, затем merge в `develop`).
+- `feature/<name>` — новая функциональность (PR в `develop`).
+- `release/<version>` — подготовка релиза (PR в `main`, затем обратно в `develop`).
+
+Подробный процесс — в [CONTRIBUTING.md](CONTRIBUTING.md), история версий — в
+[CHANGELOG.md](CHANGELOG.md).
+
 ## Лицензия
 
 MIT — см. [LICENSE](LICENSE).
