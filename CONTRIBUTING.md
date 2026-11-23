@@ -4,21 +4,26 @@
 
 | Ветка | Назначение | Откуда | Куда мержить |
 |---|---|---|---|
-| `main` | Стабильные релизы и деплой | — | — |
-| `develop` | Интеграция разработки | `main` | `main` через release/PR |
-| `fix` | Постоянная ветка исправления багов | `main` | `main`, затем `main` → `develop` |
+| `main` | **Только публикация** стабильных релизов | `release/*` | — |
+| `develop` | Разработка и улучшения; текущая рабочая ветка | `main` | `release/*` |
+| `fix` | Исправления багов | `develop` | `develop` |
 | `feature/<name>` | Новая функциональность | `develop` | `develop` |
-| `release/<version>` | Подготовка релиза | `develop` | `main`, затем обратно в `develop` |
+| `release/<version>` | Подготовка публикации | `develop` | `main`, затем обратно в `develop` |
+
+`main` не используется для повседневной работы: в него попадают только проверенные релизы
+через `release/*`. Вся разработка, улучшения и исправления ведутся в `develop`/`fix`.
 
 `main` и `develop` должны быть защищены в GitHub: PR, зелёный CI, запрет force-push.
-`feature/*` и `release/*` — короткоживущие, удаляются после merge. Ветка `fix` постоянная:
-после каждого исправления синхронизируйте её с `main`.
+`feature/*` и `release/*` — короткоживущие. Ветка `fix` синхронизируется с `develop`
+после каждого исправления.
 
 ## Исправление бага
 
 ```bash
-git checkout fix
+git checkout develop
 git pull
+git checkout fix
+git merge develop
 
 # правки, проверка
 git add -A
@@ -26,20 +31,9 @@ git commit -m "Fix: short description"
 git push
 ```
 
-Откройте PR `fix` → `main`. После merge синхронизируйте ветки:
+Откройте PR `fix` → `develop`. Публикация исправления — позже через `release/*` → `main`.
 
-```bash
-git checkout develop
-git pull
-git merge main
-git push
-
-git checkout fix
-git merge main
-git push
-```
-
-## Новая функциональность
+## Новая функциональность / улучшение
 
 ```bash
 git checkout develop
@@ -53,7 +47,7 @@ git push -u origin feature/short-description
 
 PR в `develop`. После merge ветку удалить.
 
-## Релиз
+## Публикация релиза
 
 ```bash
 git checkout develop

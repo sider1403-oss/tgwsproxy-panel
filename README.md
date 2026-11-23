@@ -281,11 +281,11 @@ CI (`.github/workflows/ci.yml`) проверяет компиляцию Python �
 
 ## Ветки и разработка
 
-- `main` — стабильные релизы и деплой.
-- `develop` — интеграция разработки.
-- `fix` — постоянная ветка исправлений багов (PR в `main`, затем merge в `develop`).
+- `main` — **только публикация** стабильных релизов; напрямую не коммитить.
+- `develop` — текущая ветка разработки и улучшений.
+- `fix` — исправления багов (PR в `develop`).
 - `feature/<name>` — новая функциональность (PR в `develop`).
-- `release/<version>` — подготовка релиза (PR в `main`, затем обратно в `develop`).
+- `release/<version>` — подготовка публикации (PR в `main`, затем обратно в `develop`).
 
 Подробный процесс — в [CONTRIBUTING.md](CONTRIBUTING.md), история версий — в
 [CHANGELOG.md](CHANGELOG.md).
