@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#070b12" />
+    <title>TGWSProxy — панель управления</title>
+    <script>
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('tgws-theme')
+          var theme = saved === 'light' ? 'light' : 'dark'
+          document.documentElement.setAttribute('data-theme', theme)
+          var meta = document.querySelector('meta[name="theme-color"]')
+          if (meta) meta.setAttribute('content', theme === 'light' ? '#f4f7fb' : '#070b12')
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

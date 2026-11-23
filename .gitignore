@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+frontend-src/node_modules/
+
+# Built frontend
+frontend/
+
+# Runtime data (never commit)
+data/
+logs/
+backups/
+config/
+.env
+*.log
+
+# Local screenshots / scratch
+shots/
+*.bundle
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
