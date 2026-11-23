@@ -23,8 +23,8 @@ def key_of(raw: str) -> str | None:
     return candidate.lower() if len(candidate) == 32 else None
 
 
-def link_for(key: str, env: dict) -> str:
-    ip = env.get("TG_LINK_IP") or settings.PUBLIC_HOST
+def link_for(key: str, env: dict, host: str | None = None) -> str:
+    ip = host or env.get("TG_LINK_IP") or settings.PUBLIC_HOST
     port = env.get("TG_PORT") or "1443"
     domain = (env.get("TG_LISTEN_FAKETLS_DOMAIN") or "").strip()
     if domain:
@@ -32,6 +32,29 @@ def link_for(key: str, env: dict) -> str:
     else:
         secret = "dd" + key
     return f"tg://proxy?server={ip}&port={port}&secret={secret}"
+
+
+def lan_host() -> str | None:
+    host = (settings.PUBLIC_HOST or "").strip()
+    if host in ("", "127.0.0.1", "localhost", "0.0.0.0", "::1"):
+        return None
+    return host
+
+
+def links_for(key: str, env: dict) -> dict:
+    """Both a LAN link and the advertised (possibly public) link.
+
+    LAN clients must use the LAN address: when they dial the public IP through
+    the router's port forward, hairpin NAT may rewrite the source to the
+    firewall address (e.g. 192.168.50.1) and the real client IP is lost.
+    """
+    external = (env.get("TG_LINK_IP") or "").strip() or lan_host() or settings.PUBLIC_HOST
+    lan = lan_host()
+    return {
+        "link": link_for(key, env, external),
+        "link_external": link_for(key, env, external),
+        "link_lan": link_for(key, env, lan) if lan else None,
+    }
 
 
 def _meta(key: str) -> dict:
@@ -56,10 +79,10 @@ def list_keys() -> dict:
             {
                 "key": key,
                 "masked": key[:4] + "…" + key[-4:],
-                "link": link_for(key, env),
                 "enabled": True,
                 "comment": meta["comment"],
                 "created_at": meta["created_at"],
+                **links_for(key, env),
             }
         )
     disabled = []
@@ -70,10 +93,10 @@ def list_keys() -> dict:
             {
                 "key": row["key"],
                 "masked": row["key"][:4] + "…" + row["key"][-4:],
-                "link": link_for(row["key"], env),
                 "enabled": False,
                 "comment": row["comment"] or "",
                 "created_at": row["created_at"],
+                **links_for(row["key"], env),
             }
         )
     return {
@@ -88,6 +111,8 @@ def list_keys() -> dict:
             "по ключам (подключения, трафик, последнее подключение) технически недоступна — "
             "панель показывает только глобальную статистику."
         ),
+        "lan_host": lan_host(),
+        "external_host": (env.get("TG_LINK_IP") or "").strip() or lan_host() or settings.PUBLIC_HOST,
         "link": link_for(active[0]["key"], env) if active else None,
     }
 
@@ -113,7 +138,7 @@ def add_key(comment: str = "") -> dict:
         (key, comment.strip(), db.now_iso()),
     )
     result["key"] = key
-    result["link"] = link_for(key, config_editor.effective_env())
+    result.update(links_for(key, config_editor.effective_env()))
     return result
 
 

@@ -145,6 +145,8 @@ export interface KeyItem {
   key: string
   masked: string
   link: string
+  link_lan?: string | null
+  link_external?: string | null
   enabled: boolean
   comment: string
   created_at: string | null
@@ -158,6 +160,8 @@ export interface KeysResponse {
   stats_supported: boolean
   stats_note: string
   link: string | null
+  lan_host?: string | null
+  external_host?: string | null
 }
 
 export interface ActionResult {
@@ -174,6 +178,8 @@ export interface ActionResult {
   warnings?: string[]
   key?: string
   link?: string
+  link_lan?: string | null
+  link_external?: string | null
 }
 
 export interface ServiceInfo {

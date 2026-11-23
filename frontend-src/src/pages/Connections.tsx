@@ -190,7 +190,7 @@ function ActiveTab() {
 
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-line/60 bg-ink/5 px-3 py-2 text-[11px] text-muted">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>{data?.note ?? 'Прокси не сообщает ключ и DC для активной сессии.'} Устройство определяется приблизительно по TCP SYN (Windows / Apple / Android / Linux) — нажмите на значок, чтобы указать точный тип вручную.</span>
+          <span>{data?.note ?? 'Прокси не сообщает ключ и DC для активной сессии.'} Устройство определяется приблизительно по TCP SYN (Windows / Apple / Android / Linux) — нажмите на значок, чтобы указать точный тип вручную. Если клиент в LAN подключается через публичный IP, роутер может подменять источник на IP шлюза (hairpin NAT) — для устройств в локальной сети используйте LAN-ссылку из раздела «Ключи».</span>
         </div>
       </Card>
 
@@ -346,6 +346,12 @@ function HistoryTab() {
         </div>
 
         {error ? <div className="mb-3 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-xs text-bad">{error}</div> : null}
+
+        <div className="mb-3 rounded-lg border border-line/60 bg-ink/5 px-3 py-2 text-[11px] text-muted">
+          IP показан таким, каким его видел прокси. Если устройство в LAN подключается к публичному
+          адресу через роутер, hairpin NAT может заменить источник на IP шлюза (например,
+          <span className="font-mono"> 192.168.50.1</span>) — используйте LAN-ссылку в разделе «Ключи».
+        </div>
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1060px] border-collapse">

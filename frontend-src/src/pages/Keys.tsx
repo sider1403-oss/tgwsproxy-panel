@@ -15,6 +15,7 @@ export default function Keys() {
   const [addOpen, setAddOpen] = useState(false)
   const [newComment, setNewComment] = useState('')
   const [newLink, setNewLink] = useState<string | null>(null)
+  const [newLinkLan, setNewLinkLan] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<Pending>(null)
   const [commentEdit, setCommentEdit] = useState<KeyItem | null>(null)
@@ -88,10 +89,12 @@ export default function Keys() {
   const doAdd = async () => {
     setBusy(true)
     setNewLink(null)
+    setNewLinkLan(null)
     try {
       const r = await api.addKey(newComment)
       if (!r.ok) throw new Error(r.error || 'Ошибка')
-      setNewLink(r.link || null)
+      setNewLink(r.link_external || r.link || null)
+      setNewLinkLan(r.link_lan || null)
       setNewComment('')
       push('ok', 'Ключ создан — контейнер перезапущен')
       await load()
@@ -140,13 +143,27 @@ export default function Keys() {
           <Button onClick={() => void load()} loading={loading}>
             <RefreshCw className="h-4 w-4" /> Обновить
           </Button>
-          <Button variant="primary" onClick={() => { setAddOpen(true); setNewLink(null) }}>
+          <Button variant="primary" onClick={() => { setAddOpen(true); setNewLink(null); setNewLinkLan(null) }}>
             <Plus className="h-4 w-4" /> Создать ключ
           </Button>
         </div>
       </div>
 
       {error ? <div className="rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-xs text-bad">{error}</div> : null}
+
+      {data?.lan_host && data?.external_host && data.lan_host !== data.external_host ? (
+        <div className="flex items-start gap-3 rounded-xl border border-warn/25 bg-warn/[0.06] px-4 py-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+          <div className="text-xs leading-relaxed text-ink/80">
+            <div className="mb-1 font-medium text-warn">Клиенты в LAN должны использовать LAN-ссылку</div>
+            Если телефон/компьютер в локальной сети подключается по публичному адресу{' '}
+            <span className="font-mono">{data.external_host}</span> через роутер, hairpin NAT может
+            подменить источник на IP шлюза (например, <span className="font-mono">192.168.50.1</span>).
+            Панель тогда покажет неверный IP и устройство. Для устройств в LAN копируйте ссылку с
+            адресом <span className="font-mono">{data.lan_host}</span>.
+          </div>
+        </div>
+      ) : null}
 
       {data?.stats_supported === false ? (
         <div className="flex items-start gap-3 rounded-xl border border-warn/25 bg-warn/[0.06] px-4 py-3">
@@ -169,7 +186,7 @@ export default function Keys() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse">
+          <table className="w-full min-w-[1040px] border-collapse">
             <thead>
               <tr className="border-b border-line/70">
                 <th className="th">Ключ</th>
@@ -201,9 +218,19 @@ export default function Keys() {
                   <td className="td text-muted">{k.created_at ? fmtDate(k.created_at) : '—'}</td>
                   <td className="td"><Badge tone="ok">активен</Badge></td>
                   <td className="td">
-                    <div className="flex items-center gap-2">
-                      <CopyBtn value={k.link} label="Ссылка" />
-                      <span className="max-w-[220px] truncate font-mono text-[10px] text-muted">{k.link}</span>
+                    <div className="space-y-1.5">
+                      {k.link_lan ? (
+                        <div className="flex items-center gap-2">
+                          <Badge tone="info">LAN</Badge>
+                          <CopyBtn value={k.link_lan} label="Копировать" />
+                          <span className="max-w-[190px] truncate font-mono text-[10px] text-muted">{k.link_lan}</span>
+                        </div>
+                      ) : null}
+                      <div className="flex items-center gap-2">
+                        <Badge tone="muted">Интернет</Badge>
+                        <CopyBtn value={k.link_external ?? k.link} label="Копировать" />
+                        <span className="max-w-[190px] truncate font-mono text-[10px] text-muted">{k.link_external ?? k.link}</span>
+                      </div>
                     </div>
                   </td>
                   <td className="td">
@@ -275,10 +302,24 @@ export default function Keys() {
             Применение ключа пересоздаёт контейнер прокси: короткий разрыв активных сессий (несколько секунд).
           </div>
           {newLink ? (
-            <div className="space-y-2 rounded-xl border border-ok/25 bg-ok/[0.06] p-3">
-              <div className="text-xs text-ok">Ключ создан. Ссылка для Telegram:</div>
-              <div className="break-all font-mono text-[11px] text-ink/90">{newLink}</div>
-              <CopyBtn value={newLink} label="Копировать ссылку" />
+            <div className="space-y-3 rounded-xl border border-ok/25 bg-ok/[0.06] p-3">
+              <div className="text-xs text-ok">Ключ создан. Ссылки для Telegram:</div>
+              {newLinkLan ? (
+                <div className="space-y-1">
+                  <div className="text-[10px] uppercase tracking-wider text-muted">Для устройств в LAN</div>
+                  <div className="break-all font-mono text-[11px] text-ink/90">{newLinkLan}</div>
+                  <CopyBtn value={newLinkLan} label="Копировать LAN-ссылку" />
+                </div>
+              ) : null}
+              <div className="space-y-1">
+                <div className="text-[10px] uppercase tracking-wider text-muted">Для внешних устройств</div>
+                <div className="break-all font-mono text-[11px] text-ink/90">{newLink}</div>
+                <CopyBtn value={newLink} label="Копировать внешнюю ссылку" />
+              </div>
+              <div className="text-[11px] text-muted">
+                Если устройство в той же LAN, используйте LAN-ссылку — иначе роутер может скрыть
+                реальный IP клиента (hairpin NAT), и панель покажет IP шлюза.
+              </div>
             </div>
           ) : null}
         </div>
