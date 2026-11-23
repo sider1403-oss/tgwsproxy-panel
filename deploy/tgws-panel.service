@@ -11,7 +11,7 @@ WorkingDirectory=/opt/tgws-panel
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 EnvironmentFile=-/etc/tgws-panel.env
-ExecStart=/opt/tgws-panel/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8090 --app-dir /opt/tgws-panel --proxy-headers --no-access-log --timeout-graceful-shutdown 3
+ExecStart=/opt/tgws-panel/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8090 --app-dir /opt/tgws-panel --no-access-log --timeout-graceful-shutdown 3
 Restart=always
 RestartSec=3
 TimeoutStopSec=15

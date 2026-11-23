@@ -11,7 +11,7 @@
 и пассивно определяет семейство устройства клиента.
 
 > Проверено с `tg-ws-proxy 2.7.2` (образ `valnesfjord/tg-ws-proxy-rs`).
-> Панель рассчитана на доверенную локальную сеть: авторизации нет.
+> Панель рассчитана на доверенную локальную сеть и требует входа администратора.
 
 ## Возможности
 
@@ -35,6 +35,9 @@
 - **Конфигурация** — просмотр и редактирование известных `TG_*` и `--dc-ip`, валидация,
   автоматический бэкап, применение с откатом, восстановление копий.
 - **Тема** — тёмная по умолчанию, светлая по кнопке; выбор сохраняется в браузере.
+- **Безопасность** — вход по логину и паролю (Argon2id), серверные сессии в SQLite,
+  CSRF-защита, ограничение попыток входа, журнал безопасности, управление активными
+  сессиями и принудительная смена пароля.
 - **Лимиты** — ограничены `panel.log`, journald, Docker-лог, БД (retention + мягкий лимит),
   резервные копии; в UI есть карточка «Хранилище и лимиты логов».
 
@@ -93,6 +96,35 @@ sudo systemctl status tgws-panel
 
 Откройте `http://<PANEL_PUBLIC_HOST>:8090`.
 
+### Первый вход
+
+При первом запуске администратора ещё нет. Панель откроет страницу первоначальной настройки:
+
+1. Прочитайте одноразовый код по SSH:
+   ```bash
+   sudo cat /opt/tgws-panel/config/setup_code
+   ```
+2. Введите код, логин и пароль (минимум 12 символов, буквы и цифры).
+   Логины `admin`, `root`, `administrator`, `user`, `guest` зарезервированы.
+3. После создания администратора страница настройки отключается, а код удаляется.
+
+Альтернатива — CLI (создаст администратора и потребует смены пароля при входе):
+
+```bash
+sudo tgws-panel-admin create-admin --username <login>
+```
+
+Восстановление доступа, если пароль потерян:
+
+```bash
+sudo tgws-panel-admin list-users
+sudo tgws-panel-admin reset-password --username <login>
+```
+
+Сброс завершает все сессии и снимает блокировку после неудачных попыток. Если утерян код
+первоначальной настройки, удалите файл и перезапустите службу:
+`sudo rm -f /opt/tgws-panel/config/setup_code && sudo systemctl restart tgws-panel`.
+
 Если Node.js на сервере нет, соберите фронтенд на машине разработчика
 (`cd frontend-src && npm ci && npm run build`) и скопируйте каталог `frontend/` на сервер.
 
@@ -120,6 +152,13 @@ sudo systemctl restart tgws-panel
 | `TGWS_SERVICE` | `tgwsproxy` | Имя сервиса в compose |
 | `TGWS_PROXY_PORT` | `1443` | Порт прокси |
 | `TGWS_SNIFF_IFACE` | `eth0` | Интерфейс для TCP SYN fingerprint |
+| `SESSION_IDLE_MINUTES` | `60` | Завершение сессии после неактивности |
+| `SESSION_ABSOLUTE_HOURS` | `12` | Максимальный срок жизни сессии |
+| `PANEL_TRUSTED_PROXIES` | пусто | IP/CIDR reverse proxy, которым доверяются `X-Forwarded-*` |
+| `PANEL_ALLOWED_ORIGINS` | пусто | Доп. Origin для CSRF (например, `https://panel.example.com`) |
+
+`PANEL_TRUSTED_PROXIES` должен содержать **только** адрес вашего reverse proxy. Без него
+заголовки `X-Forwarded-For`/`X-Forwarded-Proto` от клиентов игнорируются.
 
 `PANEL_PORT` используется в ссылках/проверках; чтобы сменить фактический порт, измените
 `--port` в `deploy/tgws-panel.service` и `PANEL_PORT` в env-файле.
@@ -139,12 +178,29 @@ sudo systemctl restart tgws-panel
 
 ## Безопасность
 
-- Панель **без встроенной авторизации** и работает от root: доступ к порту 8090 равносилен
-  доступу к Docker на сервере. Держите её только в доверенной LAN, не делайте port-forward.
-- Для удалённого доступа используйте SSH-туннель или поставьте reverse proxy с авторизацией.
+- **Один администратор**, публичной регистрации нет. Пароль хранится только как **Argon2id**-хеш.
+- Первичный администратор создаётся через одноразовый код (`config/setup_code`, только root)
+  или CLI `tgws-panel-admin create-admin`; логины `admin`/`root`/`administrator` запрещены.
+- **Серверные сессии** в SQLite: в cookie `tgws_session` лежит случайный токен
+  (`HttpOnly`, `SameSite=Lax`, `Secure` при HTTPS). В БД хранится только SHA-256 токена.
+  Сессия завершается по неактивности (`SESSION_IDLE_MINUTES`) и по абсолютному сроку
+  (`SESSION_ABSOLUTE_HOURS`).
+- Все `/api/*`, кроме `auth/status`, `auth/login`, `auth/setup` и минимального `/api/health`,
+  требуют сессию. Изменяющие запросы требуют CSRF-токен и разрешённый Origin/Referer.
+- После 5 неудачных попыток логин/пара блокируются на 15 минут; попытки логируются.
+  Смена пароля завершает остальные сессии, выход удаляет сессию на сервере.
+- **Ключи не отдаются списком**: `/api/keys` возвращает маску и `id`; полный ключ/ссылки
+  доступны только через `POST /api/keys/{id}/reveal` с подтверждением текущего пароля.
+- **Резервные копии** (каталог `700`, файлы `600`) скачиваются только после подтверждения
+  пароля; архив содержит `.env` с TG_SECRET.
+- Отдельный **журнал безопасности** фиксирует входы, выходы, смену пароля, сессии,
+  CSRF-отказы, доступ без авторизации и административные действия. Пароли, cookie и полные
+  секреты в журнал не попадают.
+- Панель работает от root (Docker, `nsenter`, raw socket) и остаётся **только для LAN**:
+  не открывайте 8090 в интернет. Для HTTPS поставьте reverse proxy и укажите его адрес в
+  `PANEL_TRUSTED_PROXIES`, а домен — в `PANEL_ALLOWED_ORIGINS`.
 - Токен Telegram-бота хранится в `/opt/tgws-panel/config/alerts.json` (каталог `700`, файл `600`)
   и маскируется в API.
-- Панель не изменяет неизвестные параметры compose и не хранит секрет прокси в репозитории.
 
 ## Ограничения
 
@@ -157,6 +213,10 @@ sudo systemctl restart tgws-panel
 - История ограничена ротацией Docker-логов и retention в SQLite (7 дней события/сэмплы,
   90 дней сессии, 30 дней аудит).
 - Активные сессии не знают ключ и DC до завершения сессии.
+- Нет 2FA/SSO и веб-управления несколькими пользователями: один администратор,
+  дополнительные учётные записи — через CLI. Восстановление доступа требует SSH/root.
+- `/api/health` остаётся публичным (только `{ok, ts}`) для мониторинга.
+- Защита от подбора хранится в SQLite и рассчитана на один экземпляр панели, не на кластер.
 
 ## API
 
@@ -164,7 +224,8 @@ sudo systemctl restart tgws-panel
 GET  /api/overview?range=1h
 GET  /api/connections/active
 GET  /api/connections/history
-GET  /api/keys
+GET  /api/keys                   # маска, id, без секрета
+POST /api/keys/{id}/reveal       # полный ключ после пароля
 GET  /api/logs
 GET  /api/diagnostics
 POST /api/diagnostics/check
@@ -176,6 +237,23 @@ POST /api/service/action
 GET/PUT /api/config
 GET  /api/logs/stream        # SSE
 GET  /api/stream?range=1h    # SSE
+```
+
+Аутентификация:
+
+```
+GET  /api/auth/status
+POST /api/auth/login
+POST /api/auth/setup
+POST /api/auth/logout
+POST /api/auth/password
+GET  /api/security/overview
+GET  /api/security/sessions
+DELETE /api/security/sessions/{id}
+POST /api/security/sessions/revoke-others
+POST /api/security/sessions/revoke-all
+GET  /api/security/events
+GET  /api/security/attempts
 ```
 
 ## Разработка

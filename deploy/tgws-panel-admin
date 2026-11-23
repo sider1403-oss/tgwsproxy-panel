@@ -1,0 +1,5 @@
+#!/bin/sh
+# Wrapper for the panel administration CLI.
+set -eu
+cd "${TGWS_PANEL_ROOT:-/opt/tgws-panel}"
+exec "${TGWS_PANEL_ROOT:-/opt/tgws-panel}/venv/bin/python" -m app.cli "$@"

@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import alerts, audit, collector, config_editor, db, devices, diagnostics, dockerctl, keys, netns, ops, settings, storage
+from . import alerts, audit, auth_api, collector, config_editor, db, devices, diagnostics, dockerctl, keys, netns, ops, security, settings, storage
 from .mask import mask_text
 
 COLLECTOR: collector.Collector | None = None
@@ -32,6 +32,9 @@ async def lifespan(app: FastAPI):
         settings.CONFIG_DIR.chmod(0o700)
     except OSError:
         pass
+    security.ensure_setup_state()
+    security.cleanup()
+    security.harden_permissions()
     COLLECTOR = collector.Collector()
     COLLECTOR.start()
     DIAG_WORKER = diagnostics.Worker()
@@ -47,7 +50,56 @@ async def lifespan(app: FastAPI):
         DIAG_WORKER.stop()
 
 
-app = FastAPI(title="TGWSProxy Admin Panel", version="1.0.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="TGWSProxy Admin Panel", version="1.1.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app.include_router(auth_api.router)
+
+PUBLIC_API = {"/api/health", "/api/auth/status", "/api/auth/login", "/api/auth/setup"}
+PUBLIC_POST = {"/api/auth/login", "/api/auth/setup"}
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    """Require a server-side session for every /api route except the login/setup flow."""
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    if path in PUBLIC_POST:
+        if not security.origin_allowed(request) or not security.pre_csrf_matches(request):
+            security.log_event("csrf_failed", request, detail=f"{request.method} {path}")
+            return JSONResponse({"detail": "CSRF check failed"}, status_code=403)
+        return await call_next(request)
+
+    if path in PUBLIC_API:
+        return await call_next(request)
+
+    session = security.load_session(request)
+    if not session:
+        security.log_unauthorized(request)
+        return JSONResponse({"detail": "Требуется авторизация"}, status_code=401)
+
+    if session["must_change_password"] and not security.must_change_allowed(path):
+        return JSONResponse(
+            {"detail": "Требуется сменить пароль", "code": "password_change_required"},
+            status_code=403,
+        )
+
+    if request.method not in SAFE_METHODS:
+        if not security.origin_allowed(request) or not security.csrf_matches(request, session["csrf"]):
+            security.log_event("csrf_failed", request, username=session["username"], detail=f"{request.method} {path}")
+            return JSONResponse({"detail": "CSRF check failed"}, status_code=403)
+
+    request.state.session = session
+    response = await call_next(request)
+    if request.method not in SAFE_METHODS and not path.startswith("/api/auth/") and not path.startswith("/api/security/"):
+        security.log_event(
+            "admin_action",
+            request,
+            username=session["username"],
+            detail=f"{request.method} {path} -> {response.status_code}",
+        )
+    return response
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -195,10 +247,7 @@ def build_overview(range_key: str = "1h") -> dict:
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "—"
+    return security.client_ip(request)
 
 
 # ── health/overview ──────────────────────────────────────────────────────────
@@ -466,10 +515,16 @@ async def api_logs_stream(
             row = db.query_one("SELECT COALESCE(MAX(id),0) AS m FROM events")
             cursor = int(row["m"]) if row else 0
         last_ping = asyncio.get_event_loop().time()
+        last_auth = last_ping
         levels = [x.strip().upper() for x in (level or "").split(",") if x.strip() and x != "ALL"]
         while True:
             if await request.is_disconnected():
                 break
+            now = asyncio.get_event_loop().time()
+            if now - last_auth > 5:
+                if not security.load_session(request):
+                    break
+                last_auth = now
             rows = db.query("SELECT id, ts, level, category, ip, message FROM events WHERE id > ? ORDER BY id ASC LIMIT 300", (cursor,))
             for r in rows:
                 cursor = max(cursor, r["id"])
@@ -495,9 +550,15 @@ async def api_stream(request: Request, range_key: str = Query("1h", alias="range
         range_key = "1h"
 
     async def gen():
+        last_auth = asyncio.get_event_loop().time()
         while True:
             if await request.is_disconnected():
                 break
+            now = asyncio.get_event_loop().time()
+            if now - last_auth > 5:
+                if not security.load_session(request):
+                    break
+                last_auth = now
             try:
                 payload = build_overview(range_key)
             except Exception as exc:  # noqa: BLE001
@@ -521,6 +582,13 @@ def _check_key(key: str) -> str:
     key = key.lower()
     if not KEY_RE.match(key):
         raise HTTPException(400, "Некорректный ключ")
+    return key
+
+
+def _key_by_id(identifier: str) -> str:
+    key = keys.resolve_key(identifier)
+    if not key:
+        raise HTTPException(404, "Ключ не найден")
     return key
 
 
@@ -559,17 +627,37 @@ def api_keys_add(request: Request, payload: dict = Body(default={})):
     return result
 
 
-@app.patch("/api/keys/{key}")
-def api_keys_comment(key: str, request: Request, payload: dict = Body(...)):
-    key = _check_key(key)
+@app.patch("/api/keys/{key_id}")
+def api_keys_comment(key_id: str, request: Request, payload: dict = Body(...)):
+    key = _key_by_id(key_id)
     result = keys.set_comment(key, str(payload.get("comment") or ""))
     audit.record("key.comment", _mask_key(key), True, {"comment": result.get("comment")}, _client_ip(request))
     return result
 
 
-@app.post("/api/keys/{key}/disable")
-def api_keys_disable(key: str, request: Request):
-    key = _check_key(key)
+@app.post("/api/keys/{key_id}/reveal")
+def api_keys_reveal(key_id: str, request: Request, payload: dict = Body(...)):
+    sess = getattr(request.state, "session", None)
+    user = security.get_user_by_id(sess["user_id"]) if sess else None
+    if not user or not security.verify_password(user["password_hash"], str(payload.get("password") or "")):
+        security.log_event("secret_reveal_failed", request, username=user["username"] if user else None, detail=key_id[:8])
+        time.sleep(0.5)
+        raise HTTPException(400, "Пароль неверен")
+    key = _key_by_id(key_id)
+    links = keys.links_for(key, config_editor.effective_env())
+    security.log_event("secret_revealed", request, username=user["username"], detail=f"key={key_id[:8]}")
+    return {
+        "id": key_id,
+        "key": key,
+        "masked": key[:4] + "…" + key[-4:],
+        "link_lan": links.get("link_lan"),
+        "link_external": links.get("link_external"),
+    }
+
+
+@app.post("/api/keys/{key_id}/disable")
+def api_keys_disable(key_id: str, request: Request):
+    key = _key_by_id(key_id)
     started = time.time()
     try:
         with ops.operation("отключение ключа"):
@@ -586,9 +674,9 @@ def api_keys_disable(key: str, request: Request):
     return result
 
 
-@app.post("/api/keys/{key}/enable")
-def api_keys_enable(key: str, request: Request):
-    key = _check_key(key)
+@app.post("/api/keys/{key_id}/enable")
+def api_keys_enable(key_id: str, request: Request):
+    key = _key_by_id(key_id)
     started = time.time()
     try:
         with ops.operation("включение ключа"):
@@ -605,9 +693,9 @@ def api_keys_enable(key: str, request: Request):
     return result
 
 
-@app.delete("/api/keys/{key}")
-def api_keys_delete(key: str, request: Request):
-    key = _check_key(key)
+@app.delete("/api/keys/{key_id}")
+def api_keys_delete(key_id: str, request: Request):
+    key = _key_by_id(key_id)
     started = time.time()
     try:
         with ops.operation("удаление ключа"):
@@ -624,9 +712,9 @@ def api_keys_delete(key: str, request: Request):
     return result
 
 
-@app.get("/api/keys/{key}/stats")
-def api_keys_stats(key: str):
-    return keys.key_stats(_check_key(key))
+@app.get("/api/keys/{key_id}/stats")
+def api_keys_stats(key_id: str):
+    return keys.key_stats(_key_by_id(key_id))
 
 
 # ── service ──────────────────────────────────────────────────────────────────
@@ -816,10 +904,16 @@ async def api_restore(request: Request, payload: dict = Body(...)):
     return result
 
 
-@app.get("/api/config/backups/{name}/download")
-def api_backup_download(name: str):
+@app.post("/api/config/backups/{name}/download")
+def api_backup_download(name: str, request: Request, payload: dict = Body(...)):
     import tarfile
 
+    sess = getattr(request.state, "session", None)
+    user = security.get_user_by_id(sess["user_id"]) if sess else None
+    if not user or not security.verify_password(user["password_hash"], str(payload.get("password") or "")):
+        security.log_event("backup_download_failed", request, username=user["username"] if user else None, detail=name)
+        time.sleep(0.5)
+        raise HTTPException(400, "Пароль неверен")
     root = settings.BACKUP_DIR.resolve()
     try:
         src = (settings.BACKUP_DIR / name).resolve()
@@ -832,6 +926,7 @@ def api_backup_download(name: str):
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         tar.add(src, arcname=name)
     buf.seek(0)
+    security.log_event("backup_downloaded", request, username=user["username"], detail=name)
     return Response(
         content=buf.read(),
         media_type="application/gzip",
