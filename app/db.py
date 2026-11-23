@@ -139,6 +139,56 @@ CREATE TABLE IF NOT EXISTS device_labels (
     label TEXT,
     updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    is_admin INTEGER DEFAULT 1,
+    must_change_password INTEGER DEFAULT 0,
+    created_at TEXT,
+    last_login_at TEXT,
+    last_login_ip TEXT,
+    failed_login_count INTEGER DEFAULT 0,
+    locked_until TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT UNIQUE NOT NULL,
+    user_id INTEGER NOT NULL,
+    csrf_token TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    idle_expires_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    ip TEXT,
+    user_agent TEXT,
+    revoked INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
+
+CREATE TABLE IF NOT EXISTS auth_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    ip TEXT,
+    username TEXT,
+    success INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_attempts_ts ON auth_attempts(ts);
+
+CREATE TABLE IF NOT EXISTS security_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    event TEXT NOT NULL,
+    username TEXT,
+    ip TEXT,
+    user_agent TEXT,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_security_ts ON security_events(ts);
 """
 
 

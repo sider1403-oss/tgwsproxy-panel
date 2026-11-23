@@ -5,10 +5,12 @@ import {
   BellRing,
   KeyRound,
   LayoutDashboard,
+  LogOut,
   Menu,
   Moon,
   Power,
   ScrollText,
+  Shield,
   ShieldCheck,
   SlidersHorizontal,
   Stethoscope,
@@ -16,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { api } from '../lib/api'
+import { useAuth } from '../lib/auth'
 import { useNow, usePolling } from '../lib/hooks'
 import { useTheme } from '../lib/theme'
 import { cn } from '../lib/utils'
@@ -30,6 +33,7 @@ const NAV = [
   { to: '/service', label: 'Сервис', icon: Power },
   { to: '/diagnostics', label: 'Диагностика', icon: Stethoscope },
   { to: '/alerts', label: 'Уведомления', icon: BellRing },
+  { to: '/security', label: 'Безопасность', icon: Shield },
   { to: '/config', label: 'Конфигурация', icon: SlidersHorizontal },
 ]
 
@@ -41,6 +45,7 @@ const TITLES: Record<string, string> = {
   '/service': 'Управление сервисом',
   '/diagnostics': 'Диагностика канала',
   '/alerts': 'Уведомления',
+  '/security': 'Безопасность',
   '/config': 'Конфигурация',
 }
 
@@ -49,6 +54,7 @@ export default function Layout() {
   const location = useLocation()
   const now = useNow(1000)
   const { theme, toggle } = useTheme()
+  const { user, logout } = useAuth()
   const { data } = usePolling(() => api.service(), 10000)
   const state = data?.state
   const running = state?.running
@@ -98,6 +104,24 @@ export default function Layout() {
         </nav>
 
         <div className="border-t border-line/70 px-5 py-4 text-[11px] text-muted">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="grid h-7 w-7 place-items-center rounded-lg border border-line bg-ink/5">
+              <ShieldCheck className="h-3.5 w-3.5 text-accent" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-xs font-medium text-ink/90">{user?.username}</div>
+              <div className="text-[10px]">администратор</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              title="Выйти"
+              aria-label="Выйти"
+              className="rounded-lg border border-line p-1.5 text-muted transition hover:bg-bad/10 hover:text-bad"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <Dot tone={running ? (state?.health === 'healthy' ? 'ok' : 'warn') : 'bad'} live={!!running} />
             <span className="truncate">

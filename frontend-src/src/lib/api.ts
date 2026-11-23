@@ -10,26 +10,50 @@ import type {
   KeysResponse,
   LogsResponse,
   Overview,
+  SecurityEvent,
+  SecurityOverview,
   ServiceInfo,
+  SessionInfo,
   StorageInfo,
 } from './types'
 
+let csrfToken = ''
+
+export function setCsrfToken(token: string | null | undefined) {
+  csrfToken = token || ''
+}
+
+export function getCsrfToken() {
+  return csrfToken
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method || 'GET').toUpperCase()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((init?.headers as Record<string, string> | undefined) || {}),
+  }
+  if (method !== 'GET' && method !== 'HEAD' && csrfToken) headers['X-CSRF-Token'] = csrfToken
   const res = await fetch(path, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
+    method,
+    headers,
+    credentials: 'same-origin',
     cache: 'no-store',
   })
   if (!res.ok) {
     let message = `HTTP ${res.status}`
+    let code: string | undefined
     try {
       const data = await res.json()
       if (data?.detail) message = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)
+      code = data?.code
     } catch {
       /* ignore */
+    }
+    if (res.status === 401) window.dispatchEvent(new Event('auth:unauthorized'))
+    if (res.status === 403 && code === 'password_change_required') {
+      window.dispatchEvent(new Event('auth:password-required'))
     }
     throw new Error(message)
   }
@@ -69,18 +93,43 @@ export const api = {
   keys: () => req<KeysResponse>('/api/keys'),
   addKey: (comment: string) =>
     req<ActionResult>('/api/keys', { method: 'POST', body: JSON.stringify({ comment }) }),
-  setComment: (key: string, comment: string) =>
-    req<{ ok: boolean; comment: string }>(`/api/keys/${key}`, { method: 'PATCH', body: JSON.stringify({ comment }) }),
-  disableKey: (key: string) => req<ActionResult>(`/api/keys/${key}/disable`, { method: 'POST' }),
-  enableKey: (key: string) => req<ActionResult>(`/api/keys/${key}/enable`, { method: 'POST' }),
-  deleteKey: (key: string) => req<ActionResult>(`/api/keys/${key}`, { method: 'DELETE' }),
+  setComment: (id: string, comment: string) =>
+    req<{ ok: boolean; comment: string }>(`/api/keys/${id}`, { method: 'PATCH', body: JSON.stringify({ comment }) }),
+  disableKey: (id: string) => req<ActionResult>(`/api/keys/${id}/disable`, { method: 'POST' }),
+  enableKey: (id: string) => req<ActionResult>(`/api/keys/${id}/enable`, { method: 'POST' }),
+  deleteKey: (id: string) => req<ActionResult>(`/api/keys/${id}`, { method: 'DELETE' }),
+  revealKey: (id: string, password: string) =>
+    req<{ id: string; key: string; masked: string; link_lan: string | null; link_external: string | null }>(
+      `/api/keys/${id}/reveal`,
+      { method: 'POST', body: JSON.stringify({ password }) },
+    ),
+  keyStats: (id: string) =>
+    req<{ supported: boolean; reason: string; alternatives?: string[] }>(`/api/keys/${id}/stats`),
   config: () => req<ConfigSnapshot>('/api/config'),
   saveConfig: (payload: { environment?: Record<string, string>; dc_targets?: { dc: string; ip: string }[] }) =>
     req<ActionResult>('/api/config', { method: 'PUT', body: JSON.stringify(payload) }),
   backups: () => req<{ items: any[] }>('/api/config/backups'),
   restore: (name: string) =>
     req<ActionResult>('/api/config/restore', { method: 'POST', body: JSON.stringify({ name }) }),
-  downloadBackup: (name: string) => `/api/config/backups/${encodeURIComponent(name)}/download`,
+  downloadBackup: async (name: string, password: string) => {
+    const res = await fetch(`/api/config/backups/${encodeURIComponent(name)}/download`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}) },
+      body: JSON.stringify({ password }),
+    })
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`
+      try {
+        const data = await res.json()
+        if (data?.detail) message = String(data.detail)
+      } catch {
+        /* ignore */
+      }
+      throw new Error(message)
+    }
+    return await res.blob()
+  },
   diagnostics: () => req<DiagnosticsState>('/api/diagnostics'),
   diagQuick: () => req<DiagResult>('/api/diagnostics/check', { method: 'POST' }),
   diagProbe: () => req<DiagResult>('/api/diagnostics/probe', { method: 'POST' }),
@@ -103,4 +152,20 @@ export const api = {
       method: 'DELETE',
     }),
   device: (ip: string) => req<DeviceInfo>(`/api/devices/${encodeURIComponent(ip)}`),
+  changePassword: (current_password: string, new_password: string) =>
+    req<{ ok: boolean; revoked_other: number }>('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+  securityOverview: () => req<SecurityOverview>('/api/security/overview'),
+  securitySessions: () => req<{ sessions: SessionInfo[] }>('/api/security/sessions'),
+  revokeSession: (id: string) =>
+    req<{ ok: boolean; current: boolean }>(`/api/security/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  revokeOtherSessions: () =>
+    req<{ ok: boolean; revoked: number }>('/api/security/sessions/revoke-others', { method: 'POST' }),
+  revokeAllSessions: () =>
+    req<{ ok: boolean; revoked: number }>('/api/security/sessions/revoke-all', { method: 'POST' }),
+  securityEvents: (limit = 100) => req<{ events: SecurityEvent[] }>(`/api/security/events?limit=${limit}`),
+  securityAttempts: (limit = 50) =>
+    req<{ attempts: Array<{ ts: string; ip: string; username: string }> }>(`/api/security/attempts?limit=${limit}`),
 }
