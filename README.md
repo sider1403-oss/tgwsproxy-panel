@@ -84,8 +84,8 @@ sudo python3 -m venv venv
 sudo venv/bin/pip install -r requirements.txt
 
 cd frontend-src
-npm ci
-npm run build        # результат: /opt/tgws-panel/frontend
+sudo npm ci
+sudo npm run build        # результат: /opt/tgws-panel/frontend
 cd ..
 
 # системные пользователи
@@ -162,7 +162,7 @@ sudo tgws-panel-admin reset-password --username <login>
 cd /opt/tgws-panel
 sudo git pull
 sudo venv/bin/pip install -r requirements.txt
-cd frontend-src && npm ci && npm run build && cd ..
+cd frontend-src && sudo npm ci && sudo npm run build && cd ..
 sudo install -m 644 deploy/tgws-panel.service /etc/systemd/system/tgws-panel.service
 sudo install -m 644 deploy/tgws-panel-helper.service /etc/systemd/system/tgws-panel-helper.service
 sudo install -m 644 deploy/tgws-panel-netmon.service /etc/systemd/system/tgws-panel-netmon.service
