@@ -2,6 +2,11 @@ import { Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Connections from './pages/Connections'
+import Clients from './pages/Clients'
+import ClientDetail from './pages/ClientDetail'
+import Metrics from './pages/Metrics'
+import Traffic from './pages/Traffic'
+import Dc from './pages/Dc'
 import Keys from './pages/Keys'
 import Logs from './pages/Logs'
 import Service from './pages/Service'
@@ -36,6 +41,11 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/connections" element={<Connections />} />
+        <Route path="/clients" element={<Clients />} />
+        <Route path="/clients/:ip" element={<ClientDetail />} />
+        <Route path="/metrics/:kind" element={<Metrics />} />
+        <Route path="/traffic" element={<Traffic />} />
+        <Route path="/dc" element={<Dc />} />
         <Route path="/keys" element={<Keys />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/service" element={<Service />} />

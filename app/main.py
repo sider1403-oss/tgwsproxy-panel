@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import ipaddress
 import json
 import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -116,6 +118,58 @@ RANGES = {
     "24h": timedelta(hours=24),
     "7d": timedelta(days=7),
 }
+CLIENT_RANGES = {"1h", "6h", "24h", "7d", "container"}
+CLIENT_SORTS = {
+    "client_ip": "client_ip",
+    "sessions": "sessions",
+    "bytes_up": "bytes_up",
+    "bytes_down": "bytes_down",
+    "bytes_total": "bytes_total",
+    "first_seen": "first_seen",
+    "last_seen": "last_seen",
+}
+METRIC_FIELDS = {
+    "cpu_host",
+    "cpu_proxy",
+    "mem_used",
+    "mem_proxy",
+    "speed_in",
+    "speed_out",
+    "conns",
+    "rx",
+    "tx",
+}
+METRIC_STEPS = {"30m": 60, "1h": 60, "6h": 300, "24h": 600, "7d": 3600}
+
+_CACHE_LOCK = threading.Lock()
+_CACHE: dict[str, dict[tuple, tuple[float, dict]]] = {"clients": {}, "client": {}, "metrics": {}}
+
+
+def _cache_get(kind: str, key: tuple, ttl: float) -> dict | None:
+    now = time.time()
+    with _CACHE_LOCK:
+        item = _CACHE[kind].get(key)
+        if item and now - item[0] <= ttl:
+            return item[1]
+        if item:
+            _CACHE[kind].pop(key, None)
+    return None
+
+
+def _cache_put(kind: str, key: tuple, value: dict, max_items: int = 64) -> dict:
+    with _CACHE_LOCK:
+        bucket = _CACHE[kind]
+        bucket[key] = (time.time(), value)
+        if len(bucket) > max_items:
+            for old in sorted(bucket, key=lambda k: bucket[k][0])[: len(bucket) - max_items]:
+                bucket.pop(old, None)
+    return value
+
+
+def _start_for(range_key: str, since: str | None = None) -> str:
+    if range_key == "container":
+        return range_start_iso()
+    return db.iso(cutoff(range_key, since))
 
 
 def cutoff(range_key: str | None, since: str | None = None) -> datetime:
@@ -215,7 +269,8 @@ def build_overview(range_key: str = "1h") -> dict:
     warn_total = db.query_one("SELECT COUNT(*) AS n FROM events WHERE level='WARN'")
     warn_24h = db.query_one("SELECT COUNT(*) AS n FROM events WHERE ts >= ? AND level='WARN'", (since24,))
     dc_rows = db.query(
-        "SELECT dc, COUNT(*) AS sessions, COALESCE(SUM(bytes_up+bytes_down),0) AS bytes "
+        "SELECT dc, COUNT(*) AS sessions, COUNT(DISTINCT client_ip) AS clients, "
+        "COALESCE(SUM(bytes_up+bytes_down),0) AS bytes "
         "FROM sessions WHERE ended_at >= ? GROUP BY dc ORDER BY bytes DESC",
         (db.iso(cutoff(range_key)),),
     )
@@ -269,14 +324,288 @@ def api_overview(range_key: str = Query("1h", alias="range")):
     return build_overview(range_key)
 
 
+# ── clients ──────────────────────────────────────────────────────────────────
+
+def _active_map() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in collector.snapshot().get("active", []):
+        ip = str(item.get("ip") or "")
+        if ip:
+            counts[ip] = counts.get(ip, 0) + 1
+    return counts
+
+
+@app.get("/api/clients")
+def api_clients(
+    range_key: str = Query("24h", alias="range"),
+    since: str | None = None,
+    q: str | None = Query(None, max_length=64),
+    active: bool = False,
+    sort: str = "last_seen",
+    order: str = "desc",
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=100000),
+):
+    if range_key not in CLIENT_RANGES:
+        raise HTTPException(400, "Некорректный диапазон")
+    start = _start_for(range_key, since)
+    query = (q or "").strip() or None
+    sort_sql = CLIENT_SORTS.get(sort, "last_seen")
+    order_sql = "ASC" if str(order).lower() == "asc" else "DESC"
+    active_map = _active_map() if active else {}
+
+    where = ["ended_at >= ?"]
+    params: list = [start]
+    if query:
+        where.append("client_ip LIKE ?")
+        params.append(f"%{query}%")
+    if active:
+        if not active_map:
+            return {
+                "items": [],
+                "total": 0,
+                "limit": limit,
+                "offset": offset,
+                "range": range_key,
+                "generated_at": db.now_iso(),
+                "note": "Активных TCP-соединений сейчас нет",
+            }
+        placeholders = ",".join("?" for _ in active_map)
+        where.append(f"client_ip IN ({placeholders})")
+        params.extend(active_map.keys())
+
+    cache_key = (start, query or "", bool(active), tuple(sorted(active_map)), sort_sql, order_sql, limit, offset)
+    if not active:
+        cached = _cache_get("clients", cache_key, 15)
+        if cached is not None:
+            return cached
+
+    from_where = "FROM sessions WHERE " + " AND ".join(where)
+    total_row = db.query_one(f"SELECT COUNT(*) AS n FROM (SELECT client_ip {from_where} GROUP BY client_ip)", tuple(params))
+    total = int(total_row["n"]) if total_row else 0
+    rows = db.query(
+        f"SELECT client_ip, COUNT(*) AS sessions, COALESCE(SUM(bytes_up),0) AS bytes_up, "
+        f"COALESCE(SUM(bytes_down),0) AS bytes_down, "
+        f"COALESCE(SUM(bytes_up),0)+COALESCE(SUM(bytes_down),0) AS bytes_total, "
+        f"MIN(COALESCE(started_at, ended_at)) AS first_seen, MAX(ended_at) AS last_seen "
+        f"{from_where} GROUP BY client_ip ORDER BY {sort_sql} {order_sql} LIMIT ? OFFSET ?",
+        tuple(params + [limit, offset]),
+    )
+    items = []
+    for row in rows:
+        ip = row["client_ip"]
+        items.append(
+            {
+                "client_ip": ip,
+                "sessions": int(row["sessions"] or 0),
+                "bytes_up": int(row["bytes_up"] or 0),
+                "bytes_down": int(row["bytes_down"] or 0),
+                "bytes_total": int(row["bytes_total"] or 0),
+                "first_seen": row["first_seen"],
+                "last_seen": row["last_seen"],
+                "active": ip in active_map,
+                "active_connections": int(active_map.get(ip, 0)),
+                "device": devices.lookup(ip),
+                "key": None,
+                "key_note": "Прокси не указывает MTProto-ключ в логе сессии",
+            }
+        )
+    result = {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "range": range_key,
+        "generated_at": db.now_iso(),
+        "note": (
+            "Агрегация по завершённым сессиям; активные TCP-соединения учитываются отдельно. "
+            "Ключ и DC активной сессии прокси не сообщает; устройство определяется приблизительно."
+        ),
+    }
+    if not active:
+        _cache_put("clients", cache_key, result)
+    return result
+
+
+@app.get("/api/clients/{ip}")
+def api_client_detail(
+    ip: str,
+    range_key: str = Query("7d", alias="range"),
+    since: str | None = None,
+):
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        raise HTTPException(400, "Некорректный IP-адрес")
+    if range_key not in CLIENT_RANGES:
+        raise HTTPException(400, "Некорректный диапазон")
+    start = _start_for(range_key, since)
+    cache_key = (ip, start)
+    cached = _cache_get("client", cache_key, 10)
+    if cached is not None:
+        return cached
+
+    summary = db.query_one(
+        "SELECT COUNT(*) AS sessions, COALESCE(SUM(bytes_up),0) AS bytes_up, "
+        "COALESCE(SUM(bytes_down),0) AS bytes_down, "
+        "MIN(COALESCE(started_at, ended_at)) AS first_seen, MAX(ended_at) AS last_seen "
+        "FROM sessions WHERE client_ip=? AND ended_at>=?",
+        (ip, start),
+    )
+    active_items = [
+        dict(item, device=devices.lookup(ip))
+        for item in collector.snapshot().get("active", [])
+        if item.get("ip") == ip
+    ]
+    sessions = int(summary["sessions"] or 0) if summary else 0
+    if sessions == 0 and not active_items:
+        raise HTTPException(404, "Клиент не найден за выбранный период")
+    dcs = db.query(
+        "SELECT dc, COUNT(*) AS sessions, COALESCE(SUM(bytes_up+bytes_down),0) AS bytes "
+        "FROM sessions WHERE client_ip=? AND ended_at>=? GROUP BY dc ORDER BY bytes DESC",
+        (ip, start),
+    )
+    recent_rows = db.query(
+        "SELECT id, client_ip, client_port, dc, media, kind, closed_by, bytes_up, bytes_down, "
+        "duration, started_at, ended_at, line FROM sessions WHERE client_ip=? AND ended_at>=? "
+        "ORDER BY ended_at DESC LIMIT 50",
+        (ip, start),
+    )
+    recent = []
+    for row in recent_rows:
+        item = row_dict(row)
+        item["device"] = devices.lookup(ip)
+        recent.append(item)
+    result = {
+        "client_ip": ip,
+        "sessions": sessions,
+        "bytes_up": int(summary["bytes_up"] or 0) if summary else 0,
+        "bytes_down": int(summary["bytes_down"] or 0) if summary else 0,
+        "bytes_total": (int(summary["bytes_up"] or 0) + int(summary["bytes_down"] or 0)) if summary else 0,
+        "first_seen": summary["first_seen"] if summary else None,
+        "last_seen": summary["last_seen"] if summary else None,
+        "active": bool(active_items),
+        "active_connections": len(active_items),
+        "active_items": active_items,
+        "device": devices.lookup(ip),
+        "dcs": [row_dict(r) for r in dcs],
+        "recent": recent,
+        "key": None,
+        "key_supported": False,
+        "key_note": "Прокси не указывает MTProto-ключ в логе сессии; привязка клиента к ключу невозможна.",
+        "range": range_key,
+        "generated_at": db.now_iso(),
+        "note": "Сессии — только завершённые. Активные TCP-соединения показаны отдельно.",
+    }
+    _cache_put("client", cache_key, result)
+    return result
+
+
+# ── metrics history ──────────────────────────────────────────────────────────
+
+@app.get("/api/metrics/history")
+def api_metrics_history(
+    range_key: str = Query("1h", alias="range"),
+    since: str | None = None,
+    fields: str = "cpu_host,cpu_proxy",
+    step: int | None = Query(None, ge=5, le=3600),
+):
+    if range_key not in ("30m", "1h", "6h", "24h", "7d"):
+        raise HTTPException(400, "Некорректный диапазон")
+    selected = []
+    for part in str(fields or "").split(","):
+        name = part.strip()
+        if not name:
+            continue
+        if name not in METRIC_FIELDS:
+            raise HTTPException(400, f"Недопустимое поле метрики: {name}")
+        if name not in selected:
+            selected.append(name)
+    if not selected:
+        raise HTTPException(400, "Не выбраны поля метрики")
+    if len(selected) > 8:
+        raise HTTPException(400, "Слишком много полей метрики")
+    bucket = int(step or METRIC_STEPS[range_key])
+    if not 5 <= bucket <= 3600:
+        raise HTTPException(400, "Некорректный шаг")
+    start = db.iso(cutoff(range_key, since))
+    cache_key = (range_key, start, tuple(selected), bucket)
+    cached = _cache_get("metrics", cache_key, 20)
+    if cached is not None:
+        return cached
+
+    columns = ", ".join(selected)
+    rows = db.query(f"SELECT ts, {columns} FROM samples WHERE ts>=? ORDER BY ts", (start,))
+    buckets: dict[int, dict[str, list[float]]] = {}
+    raw: dict[str, list[float]] = {name: [] for name in selected}
+    for row in rows:
+        dt = db.parse_iso(row["ts"])
+        if not dt:
+            continue
+        ts = int(dt.timestamp()) // bucket * bucket
+        target = buckets.setdefault(ts, {name: [] for name in selected})
+        for name in selected:
+            value = row[name]
+            if value is None:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            target[name].append(number)
+            raw[name].append(number)
+    points = []
+    for ts in sorted(buckets):
+        point = {"t": datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")}
+        for name in selected:
+            values = buckets[ts].get(name) or []
+            if values:
+                point[name] = round(sum(values) / len(values), 3)
+        if len(point) > 1:
+            points.append(point)
+    if len(points) > 300:
+        stride = max(1, len(points) // 300)
+        points = points[::stride]
+    stats = {}
+    for name in selected:
+        values = raw[name]
+        if values:
+            stats[name] = {
+                "min": round(min(values), 3),
+                "avg": round(sum(values) / len(values), 3),
+                "max": round(max(values), 3),
+                "last": round(values[-1], 3),
+            }
+        else:
+            stats[name] = {"min": None, "avg": None, "max": None, "last": None}
+    min_ts = db.query_one("SELECT MIN(ts) AS t FROM samples")
+    result = {
+        "points": points,
+        "stats": stats,
+        "fields": selected,
+        "range": range_key,
+        "step": bucket,
+        "history_start": min_ts["t"] if min_ts else None,
+        "generated_at": db.now_iso(),
+        "source": "samples",
+    }
+    _cache_put("metrics", cache_key, result)
+    return result
+
+
 # ── active connections ───────────────────────────────────────────────────────
 
 @app.get("/api/connections/active")
 def api_connections_active():
     snap = collector.snapshot()
+    proxy_port = int(snap["proxy"].get("proxy_port") or settings.PROXY_PORT)
     items = sorted(snap["active"], key=lambda c: c.get("first_seen") or "")
     for c in items:
         c["device"] = devices.lookup(c["ip"])
+        c["client_id"] = f"{c['ip']}:{c['port']}"
+        c["server_id"] = f"{c.get('local_ip', '')}:{c.get('local_port', '')}"
+        c["host_ip"] = settings.PUBLIC_HOST
+        c["host_port"] = proxy_port
     return {
         "items": items,
         "count": len(items),

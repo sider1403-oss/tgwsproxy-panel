@@ -2,6 +2,8 @@ import type {
   ActionResult,
   AlertsState,
   AuditResponse,
+  ClientDetail,
+  ClientsResponse,
   ConfigSnapshot,
   DeviceInfo,
   DiagnosticsState,
@@ -9,6 +11,7 @@ import type {
   HistoryResponse,
   KeysResponse,
   LogsResponse,
+  MetricsResponse,
   Overview,
   SecurityEvent,
   SecurityOverview,
@@ -62,6 +65,27 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   overview: (range = '1h') => req<Overview>(`/api/overview?range=${range}`),
+  clients: (params: Record<string, string | number | boolean>) => {
+    const qs = new URLSearchParams()
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== '' && v !== undefined && v !== null) qs.set(k, String(v))
+    })
+    return req<ClientsResponse>(`/api/clients?${qs.toString()}`)
+  },
+  client: (ip: string, params: Record<string, string | number>) => {
+    const qs = new URLSearchParams()
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== '' && v !== undefined && v !== null) qs.set(k, String(v))
+    })
+    return req<ClientDetail>(`/api/clients/${encodeURIComponent(ip)}?${qs.toString()}`)
+  },
+  metrics: (params: Record<string, string | number>) => {
+    const qs = new URLSearchParams()
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== '' && v !== undefined && v !== null) qs.set(k, String(v))
+    })
+    return req<MetricsResponse>(`/api/metrics/history?${qs.toString()}`)
+  },
   service: () => req<ServiceInfo>('/api/service'),
   serviceAction: (action: string) =>
     req<ActionResult>('/api/service/action', { method: 'POST', body: JSON.stringify({ action }) }),

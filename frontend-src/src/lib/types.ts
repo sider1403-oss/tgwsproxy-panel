@@ -39,6 +39,10 @@ export interface ActiveConnection {
   first_seen: string
   duration: number
   device?: DeviceInfo
+  client_id?: string
+  server_id?: string
+  host_ip?: string
+  host_port?: number
 }
 
 export interface DeviceInfo {
@@ -83,7 +87,78 @@ export interface ConnPoint {
 export interface DcRow {
   dc: number
   sessions: number
+  clients?: number
   bytes: number
+}
+
+export interface ClientRow {
+  client_ip: string
+  sessions: number
+  bytes_up: number
+  bytes_down: number
+  bytes_total: number
+  first_seen: string | null
+  last_seen: string | null
+  active: boolean
+  active_connections: number
+  device: DeviceInfo
+  key: null
+  key_note: string
+}
+
+export interface ClientsResponse {
+  items: ClientRow[]
+  total: number
+  limit: number
+  offset: number
+  range: string
+  generated_at: string
+  note: string
+}
+
+export interface ClientDetail {
+  client_ip: string
+  sessions: number
+  bytes_up: number
+  bytes_down: number
+  bytes_total: number
+  first_seen: string | null
+  last_seen: string | null
+  active: boolean
+  active_connections: number
+  active_items: ActiveConnection[]
+  device: DeviceInfo
+  dcs: Array<{ dc: number; sessions: number; bytes: number }>
+  recent: Session[]
+  key: null
+  key_supported: boolean
+  key_note: string
+  range: string
+  generated_at: string
+  note: string
+}
+
+export interface MetricPoint {
+  t: string
+  [field: string]: number | string
+}
+
+export interface MetricStats {
+  min: number | null
+  avg: number | null
+  max: number | null
+  last: number | null
+}
+
+export interface MetricsResponse {
+  points: MetricPoint[]
+  stats: Record<string, MetricStats>
+  fields: string[]
+  range: string
+  step: number
+  history_start: string | null
+  generated_at: string
+  source: string
 }
 
 export interface LogEvent {

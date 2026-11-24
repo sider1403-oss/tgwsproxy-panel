@@ -40,6 +40,9 @@ const NAV = [
 const TITLES: Record<string, string> = {
   '/': 'Дашборд',
   '/connections': 'Подключения',
+  '/clients': 'Клиенты',
+  '/traffic': 'Трафик',
+  '/dc': 'DC',
   '/keys': 'Ключи доступа',
   '/logs': 'Логи',
   '/service': 'Управление сервисом',
@@ -58,7 +61,8 @@ export default function Layout() {
   const { data } = usePolling(() => api.service(), 10000)
   const state = data?.state
   const running = state?.running
-  const title = TITLES[location.pathname] ?? 'Панель'
+  const title = TITLES[location.pathname]
+    ?? (location.pathname.startsWith('/clients/') ? 'Клиент' : location.pathname.startsWith('/metrics/') ? 'Метрики' : 'Панель')
 
   return (
     <div className="min-h-screen lg:flex">

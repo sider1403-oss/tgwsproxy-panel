@@ -17,7 +17,8 @@
 
 - **Дашборд** — статус и health, uptime, версия, активные сессии, клиенты, трафик в обе стороны,
   скорость, ошибки/предупреждения, CPU/RAM LXC и контейнера, графики трафика и подключений,
-  распределение по DC.
+  распределение по DC. Карточки кликабельны и ведут в детализацию (`/clients`, `/metrics/*`,
+  `/traffic`, `/dc`, `/connections`, `/logs`, `/service`).
 - **Подключения** — активные TCP-сессии (IP, устройство, порт, длительность, TCP-счётчики,
   принудительный разрыв) и история из журнала с поиском, фильтрами, сортировкой и пагинацией.
 - **Устройства** — приблизительное определение по TCP SYN (Windows, Apple/iOS/macOS, Android,
@@ -260,12 +261,15 @@ sudo systemctl restart tgws-panel-helper tgws-panel-netmon tgws-panel
 GET  /api/overview?range=1h
 GET  /api/connections/active
 GET  /api/connections/history
+GET  /api/clients?range=24h&q=&active=&sort=&order=&limit=50&offset=0
+GET  /api/clients/{ip}?range=7d
+GET  /api/metrics/history?range=1h&fields=cpu_host,cpu_proxy&step=60
 GET  /api/keys                   # маска, id, без секрета
 POST /api/keys/{id}/reveal       # полный ключ после пароля
 GET  /api/logs
 GET  /api/diagnostics
 POST /api/diagnostics/check
-POST /api/diagnostics/probe
+# POST /api/diagnostics/probe отключён (403): временные контейнеры запрещены
 GET  /api/alerts
 GET  /api/audit
 GET  /api/storage
@@ -274,6 +278,12 @@ GET/PUT /api/config
 GET  /api/logs/stream        # SSE
 GET  /api/stream?range=1h    # SSE
 ```
+
+`/api/clients` агрегирует **завершённые** сессии по IP; `active=1` оставляет только
+IP с текущими TCP-соединениями. `/api/clients/{ip}` возвращает сводку, DC, последние
+сессии и активные TCP. `/api/metrics/history` отдаёт сэмплы `samples` (CPU, RAM,
+скорости, соединения) с downsampling; `mem_total` в истории отсутствует — только в
+текущем `/api/overview`. Ключ MTProto и DC активной сессии прокси не сообщает.
 
 Аутентификация:
 

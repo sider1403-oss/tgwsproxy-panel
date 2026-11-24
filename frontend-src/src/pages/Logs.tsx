@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Download, Info, Pause, Play, Search } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Download, Info, Pause, Play, Search } from 'lucide-react'
 import type { LogEvent } from '../lib/types'
 import { api } from '../lib/api'
 import { useSse } from '../lib/hooks'
@@ -10,11 +11,13 @@ import { cn } from '../lib/utils'
 const PAGE = 100
 
 export default function Logs() {
-  const [level, setLevel] = useState('ALL')
-  const [category, setCategory] = useState('ALL')
-  const [q, setQ] = useState('')
-  const [range, setRange] = useState('6h')
-  const [offset, setOffset] = useState(0)
+  const [params, setParams] = useSearchParams()
+  const from = params.get('from') === 'dashboard'
+  const [level, setLevel] = useState(params.get('level') || 'ALL')
+  const [category, setCategory] = useState(params.get('category') || 'ALL')
+  const [q, setQ] = useState(params.get('q') || '')
+  const [range, setRange] = useState(params.get('range') || '6h')
+  const [offset, setOffset] = useState(Math.max(0, parseInt(params.get('offset') || '0', 10) || 0))
   const [items, setItems] = useState<LogEvent[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -23,6 +26,18 @@ export default function Logs() {
   const [error, setError] = useState<string | null>(null)
   const { push } = useToast()
   const maxIdRef = useRef(0)
+
+  useEffect(() => {
+    const next = new URLSearchParams()
+    if (level !== 'ALL') next.set('level', level)
+    if (category !== 'ALL') next.set('category', category)
+    if (q) next.set('q', q)
+    if (range !== '6h') next.set('range', range)
+    if (offset) next.set('offset', String(offset))
+    if (from) next.set('from', 'dashboard')
+    setParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [level, category, q, range, offset, from])
 
   const filters = { level: level === 'ALL' ? '' : level, category: category === 'ALL' ? '' : category, q, range }
 
@@ -82,12 +97,18 @@ export default function Logs() {
 
   return (
     <div className="space-y-4">
+      {from ? (
+        <Link to="/" className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-card/60 px-2.5 py-1.5 text-xs text-muted transition hover:bg-ink/5 hover:text-ink">
+          <ArrowLeft className="h-3.5 w-3.5" /> На дашборд
+        </Link>
+      ) : null}
       <Card>
         <div className="grid gap-2 lg:grid-cols-[130px_150px_1fr_140px_auto]">
           <Select value={level} onChange={(e) => setLevel(e.target.value)}>
             <option value="ALL">все уровни</option>
             <option value="INFO">INFO</option>
             <option value="WARN">WARNING</option>
+            <option value="WARN,ERROR">WARNING + ERROR</option>
             <option value="ERROR">ERROR</option>
             <option value="DEBUG">DEBUG</option>
           </Select>

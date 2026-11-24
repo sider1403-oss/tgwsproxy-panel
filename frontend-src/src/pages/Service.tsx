@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { CheckCircle2, FileCode2, HardDrive, History, Play, Power, RefreshCw, RotateCcw, ScrollText, Square, XCircle } from 'lucide-react'
-import type { ActionResult, AuditResponse, ConfigSnapshot, ServiceInfo, StorageInfo } from '../lib/types'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, CheckCircle2, FileCode2, HardDrive, History, Play, Power, RefreshCw, RotateCcw, ScrollText, Square, XCircle } from 'lucide-react'
+import type { ActionResult, AuditResponse, ConfigSnapshot, LogsResponse, ServiceInfo, StorageInfo } from '../lib/types'
 import { api } from '../lib/api'
 import { usePolling } from '../lib/hooks'
-import { fmtBytes, fmtDate, fmtDuration } from '../lib/format'
+import { fmtBytes, fmtDate, fmtDuration, fmtRelative, levelTone } from '../lib/format'
 import { Badge, Button, Card, CardTitle, ConfirmDialog, Dialog, Empty, useToast } from '../components/ui'
 import { cn } from '../lib/utils'
 
@@ -27,9 +28,16 @@ const ACTION_LABELS: Record<string, string> = {
 }
 
 export default function Service() {
+  const [searchParams] = useSearchParams()
+  const from = searchParams.get('from') === 'dashboard'
   const { data, error, loading } = usePolling<ServiceInfo>(() => api.service(), 5000, [])
   const { data: auditData } = usePolling<AuditResponse>(() => api.audit(50), 15000, [])
   const { data: storage } = usePolling<StorageInfo>(() => api.storage(), 30000, [])
+  const { data: recentLogs } = usePolling<LogsResponse>(
+    () => api.logs({ level: 'WARN,ERROR', range: '24h', limit: 10, offset: 0 }),
+    15000,
+    [],
+  )
   const [busy, setBusy] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<'stop' | 'restart' | null>(null)
   const [result, setResult] = useState<ActionResult | null>(null)
@@ -83,6 +91,11 @@ export default function Service() {
 
   return (
     <div className="space-y-4">
+      {from ? (
+        <Link to="/" className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-card/60 px-2.5 py-1.5 text-xs text-muted transition hover:bg-ink/5 hover:text-ink">
+          <ArrowLeft className="h-3.5 w-3.5" /> На дашборд
+        </Link>
+      ) : null}
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <CardTitle right={<Badge tone={running ? 'ok' : 'bad'}>{running ? st?.state : 'stopped'}</Badge>}>Состояние сервиса</CardTitle>
@@ -133,6 +146,35 @@ export default function Service() {
           </div>
         </Card>
       </div>
+
+      <Card>
+        <CardTitle
+          right={
+            <Link to="/logs?level=WARN,ERROR&range=24h&from=dashboard" className="text-xs text-accent hover:underline">
+              Все логи
+            </Link>
+          }
+        >
+          Последние события и ошибки
+        </CardTitle>
+        {recentLogs?.items.length ? (
+          <div className="space-y-1.5">
+            {recentLogs.items.map((event) => (
+              <div key={event.id} className="rounded-lg border border-line/60 bg-ink/5 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
+                  <Badge tone={levelTone(event.level)}>{event.level}</Badge>
+                  <span>{fmtRelative(event.ts)}</span>
+                  {event.ip ? <span className="font-mono">{event.ip}</span> : null}
+                  <span>{event.category}</span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-xs text-ink/80">{event.message}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <Empty title="Событий нет" hint="За 24 часа предупреждений и ошибок не найдено." />
+        )}
+      </Card>
 
       {result ? (
         <Card>
