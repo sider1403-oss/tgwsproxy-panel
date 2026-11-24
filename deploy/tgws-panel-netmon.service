@@ -1,0 +1,49 @@
+[Unit]
+Description=TGWSProxy panel SYN fingerprint collector
+Documentation=file:///opt/tgws-panel/README.md
+After=network-online.target
+Wants=network-online.target
+Before=tgws-panel.service
+
+[Service]
+Type=simple
+User=tgws-netmon
+Group=tgws-netmon
+SupplementaryGroups=tgws-panel
+WorkingDirectory=/opt/tgws-panel
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/etc/tgws-panel.env
+ExecStart=/opt/tgws-panel/venv/bin/python -m app.netmon
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_PACKET AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+UMask=0077
+RuntimeDirectory=tgws-panel-netmon
+RuntimeDirectoryMode=0755
+ReadWritePaths=/var/lib/tgws-panel-netmon /run/tgws-panel-netmon
+InaccessiblePaths=/opt/tgws-panel/data /opt/tgws-panel/config /opt/tgws-panel/logs /opt/tg-ws-proxy/.env
+
+[Install]
+WantedBy=multi-user.target

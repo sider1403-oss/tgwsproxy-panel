@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+### Security
+- Основной процесс переведён на системного пользователя `tgws-panel` без root,
+  Docker Socket, `sudo` и группы `docker`.
+- Добавлен `tgws-panel-helper.service`: root-процесс с Unix-сокетом, `SO_PEERCRED`
+  и строгим allowlist операций (Docker только `tgwsproxy`, nsenter/ss, конфигурация,
+  резервные копии, чтение Docker-логов).
+- AF_PACKET-сниффер вынесен в `tgws-panel-netmon.service` с `CAP_NET_RAW`; netmon
+  не имеет доступа к Docker, `.env` и базе панели.
+- Панель и helper получили systemd-hardening (`ProtectSystem=strict`, `NoNewPrivileges`,
+  `PrivateTmp`, `CapabilityBoundingSet`, `InaccessiblePaths` и др.).
+- Резервные копии остаются root-only; скачивание идёт через helper после пароля.
+- Сквозная диагностическая проба с временным контейнером отключена.
+
 ## [1.1.0] — 2026-11-23
 
 ### Added

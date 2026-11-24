@@ -15,17 +15,16 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import alerts, audit, auth_api, collector, config_editor, db, devices, diagnostics, dockerctl, keys, netns, ops, security, settings, storage
+from . import alerts, audit, auth_api, collector, config_editor, db, devices, diagnostics, dockerctl, helper_client, keys, netns, ops, security, settings, storage
 from .mask import mask_text
 
 COLLECTOR: collector.Collector | None = None
 DIAG_WORKER: diagnostics.Worker | None = None
-DEV_SNIFFER: devices.Sniffer | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global COLLECTOR, DIAG_WORKER, DEV_SNIFFER
+    global COLLECTOR, DIAG_WORKER
     db.conn()
     settings.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -39,11 +38,7 @@ async def lifespan(app: FastAPI):
     COLLECTOR.start()
     DIAG_WORKER = diagnostics.Worker()
     DIAG_WORKER.start()
-    DEV_SNIFFER = devices.Sniffer()
-    DEV_SNIFFER.start()
     yield
-    if DEV_SNIFFER:
-        DEV_SNIFFER.stop()
     if COLLECTOR:
         COLLECTOR.stop()
     if DIAG_WORKER:
@@ -52,6 +47,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="TGWSProxy Admin Panel", version="1.1.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 app.include_router(auth_api.router)
+
+
+@app.exception_handler(helper_client.HelperUnavailable)
+async def _helper_unavailable(_request: Request, exc: helper_client.HelperUnavailable):
+    return JSONResponse({"detail": str(exc)}, status_code=503)
+
+
+@app.exception_handler(helper_client.HelperError)
+async def _helper_error(_request: Request, exc: helper_client.HelperError):
+    return JSONResponse({"detail": str(exc)}, status_code=502)
 
 PUBLIC_API = {"/api/health", "/api/auth/status", "/api/auth/login", "/api/auth/setup"}
 PUBLIC_POST = {"/api/auth/login", "/api/auth/setup"}
@@ -722,26 +727,26 @@ def api_keys_stats(key_id: str):
 @app.get("/api/service")
 def api_service():
     snap = collector.snapshot()
-    st = dockerctl.status()
+    try:
+        st = dockerctl.status()
+    except helper_client.HelperUnavailable as exc:
+        raise HTTPException(503, str(exc))
     ok, msg = (False, "не проверено")
     if st.get("running"):
-        env = config_editor.effective_env()
-        ok, msg = dockerctl.tcp_check(settings.PUBLIC_HOST, int(env.get("TG_PORT", 1443)))
+        try:
+            env = config_editor.effective_env()
+            ok, msg = dockerctl.tcp_check(settings.PUBLIC_HOST, int(env.get("TG_PORT", 1443)))
+        except (helper_client.HelperUnavailable, helper_client.HelperError) as exc:
+            msg = str(exc)
     return {"state": st, "version": snap["proxy"].get("version"), "port_check": {"ok": ok, "message": msg}, "updated_at": snap["updated_at"]}
 
 
 def _do_action(action: str) -> dict:
     started = time.time()
-    env = config_editor.effective_env()
-    port = int(env.get("TG_PORT", 1443))
-    if action == "start":
-        rc, out, err = dockerctl.compose(["up", "-d"], timeout=180)
-    elif action == "stop":
-        rc, out, err = dockerctl.compose(["stop"], timeout=60)
-    elif action == "restart":
-        rc, out, err = dockerctl.compose(["restart"], timeout=120)
-    elif action == "check":
+    if action == "check":
         st = dockerctl.status()
+        env = config_editor.effective_env()
+        port = int(env.get("TG_PORT", 1443))
         ok, msg = dockerctl.tcp_check(settings.PUBLIC_HOST, port)
         lines = [
             f"Контейнер: {st.get('state')}",
@@ -760,23 +765,11 @@ def _do_action(action: str) -> dict:
             "error": None if ok else msg,
             "state": st,
         }
-    else:
+    if action not in ("start", "stop", "restart"):
         raise HTTPException(400, "Неизвестное действие")
-
-    if action in ("restart",):
-        time.sleep(2)
-    st = dockerctl.status()
-    ok = bool(st.get("running"))
-    if action == "stop":
-        ok = not st.get("running")
-    return {
-        "ok": ok and rc == 0,
-        "action": action,
-        "duration_ms": int((time.time() - started) * 1000),
-        "output": (out or "").strip()[-4000:],
-        "error": None if (rc == 0 and ok) else (err or "контейнер не достиг нужного состояния").strip()[-2000:],
-        "state": st,
-    }
+    result = helper_client.call("docker.service", timeout=180, action=action)
+    result["duration_ms"] = int((time.time() - started) * 1000)
+    return result
 
 
 @app.post("/api/service/action")
@@ -786,7 +779,12 @@ async def api_service_action(request: Request, payload: dict = Body(...)):
         raise HTTPException(400, "Недопустимое действие")
     started = time.time()
     if action == "check":
-        result = await asyncio.to_thread(_do_action, action)
+        try:
+            result = await asyncio.to_thread(_do_action, action)
+        except helper_client.HelperUnavailable as exc:
+            raise HTTPException(503, str(exc))
+        except helper_client.HelperError as exc:
+            raise HTTPException(502, str(exc))
         audit.record("service.check", "tgwsproxy", bool(result.get("ok")), {"output": result.get("output")}, _client_ip(request), int((time.time() - started) * 1000))
         return result
     try:
@@ -794,6 +792,10 @@ async def api_service_action(request: Request, payload: dict = Body(...)):
             result = await asyncio.to_thread(_do_action, action)
     except ops.Busy as exc:
         raise HTTPException(409, str(exc))
+    except helper_client.HelperUnavailable as exc:
+        raise HTTPException(503, str(exc))
+    except helper_client.HelperError as exc:
+        raise HTTPException(502, str(exc))
     audit.record(
         f"service.{action}",
         "tgwsproxy",
@@ -809,9 +811,13 @@ async def api_service_action(request: Request, payload: dict = Body(...)):
 
 @app.get("/api/service/logs")
 def api_service_logs(lines: int = Query(100, ge=1, le=2000)):
-    rc, out, err = dockerctl.run(["docker", "logs", "--tail", str(lines), settings.CONTAINER], timeout=30)
-    text = out if rc == 0 else (err or out)
-    return {"ok": rc == 0, "text": mask_text(text), "lines": lines}
+    try:
+        result = helper_client.call("docker.logs", timeout=35, lines=lines)
+    except helper_client.HelperUnavailable as exc:
+        raise HTTPException(503, str(exc))
+    except helper_client.HelperError as exc:
+        raise HTTPException(502, str(exc))
+    return {"ok": bool(result.get("ok")), "text": mask_text(str(result.get("text") or "")), "lines": lines}
 
 
 @app.get("/api/service/config")
@@ -906,29 +912,21 @@ async def api_restore(request: Request, payload: dict = Body(...)):
 
 @app.post("/api/config/backups/{name}/download")
 def api_backup_download(name: str, request: Request, payload: dict = Body(...)):
-    import tarfile
-
     sess = getattr(request.state, "session", None)
     user = security.get_user_by_id(sess["user_id"]) if sess else None
     if not user or not security.verify_password(user["password_hash"], str(payload.get("password") or "")):
         security.log_event("backup_download_failed", request, username=user["username"] if user else None, detail=name)
         time.sleep(0.5)
         raise HTTPException(400, "Пароль неверен")
-    root = settings.BACKUP_DIR.resolve()
     try:
-        src = (settings.BACKUP_DIR / name).resolve()
-        src.relative_to(root)
-    except ValueError:
-        raise HTTPException(400, "Некорректное имя резервной копии")
-    if not src.is_dir():
-        raise HTTPException(404, "Копия не найдена")
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        tar.add(src, arcname=name)
-    buf.seek(0)
+        content = config_editor.read_backup(name)
+    except helper_client.HelperUnavailable as exc:
+        raise HTTPException(503, str(exc))
+    except helper_client.HelperError as exc:
+        raise HTTPException(400, str(exc))
     security.log_event("backup_downloaded", request, username=user["username"], detail=name)
     return Response(
-        content=buf.read(),
+        content=content,
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{name}.tar.gz"'},
     )
@@ -949,7 +947,10 @@ def api_diagnostics():
 @app.post("/api/diagnostics/check")
 async def api_diagnostics_check(request: Request):
     started = time.time()
-    result = await asyncio.to_thread(diagnostics.quick_check)
+    try:
+        result = await asyncio.to_thread(diagnostics.quick_check)
+    except helper_client.HelperUnavailable as exc:
+        raise HTTPException(503, str(exc))
     audit.record(
         "diagnostics.check",
         "channel",
@@ -965,23 +966,7 @@ async def api_diagnostics_check(request: Request):
 
 @app.post("/api/diagnostics/probe")
 async def api_diagnostics_probe(request: Request):
-    started = time.time()
-    try:
-        with ops.operation("сквозная проверка"):
-            result = await asyncio.to_thread(diagnostics.full_probe)
-    except ops.Busy as exc:
-        raise HTTPException(409, str(exc))
-    audit.record(
-        "diagnostics.probe",
-        "end-to-end",
-        bool(result.get("ok")),
-        {"status": result.get("status"), "summary": result.get("summary")},
-        _client_ip(request),
-        int((time.time() - started) * 1000),
-    )
-    if result.get("status") == "fail":
-        alerts.notify("diagnostics", f"Сквозная проверка: {result.get('summary')}", "error")
-    return result
+    raise HTTPException(403, "Сквозная проверка отключена: временные контейнеры запрещены")
 
 
 @app.get("/api/ops")

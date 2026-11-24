@@ -1,5 +1,67 @@
 #!/bin/sh
-# Wrapper for the panel administration CLI.
+# Root-owned wrapper for panel administration.
+#
+# The CLI itself only touches the panel SQLite DB and /opt/tgws-panel/config,
+# so it is executed as the unprivileged tgws-panel user. This wrapper stays
+# deliberately small: it validates the subcommand and username, then drops
+# privileges. It is intended to be invoked via sudo by the server administrator.
 set -eu
-cd "${TGWS_PANEL_ROOT:-/opt/tgws-panel}"
-exec "${TGWS_PANEL_ROOT:-/opt/tgws-panel}/venv/bin/python" -m app.cli "$@"
+
+PANEL_ROOT="${TGWS_PANEL_ROOT:-/opt/tgws-panel}"
+PYTHON="$PANEL_ROOT/venv/bin/python"
+
+usage() {
+    echo "usage: tgws-panel-admin {create-admin|reset-password|disable-user|enable-user|logout-all|list-users} ..." >&2
+    exit 2
+}
+
+[ "$#" -ge 1 ] || usage
+cd "$PANEL_ROOT"
+cmd="$1"
+shift
+
+case "$cmd" in
+    list-users)
+        [ "$#" -eq 0 ] || usage
+        exec runuser -u tgws-panel -- "$PYTHON" -m app.cli list-users
+        ;;
+    create-admin)
+        [ "$#" -ge 2 ] || usage
+        [ "$1" = "--username" ] || usage
+        username="$2"
+        shift 2
+        must_change=""
+        if [ "${1:-}" = "--must-change" ]; then
+            must_change="--must-change"
+            shift
+        fi
+        [ "$#" -eq 0 ] || usage
+        ;;
+    reset-password)
+        [ "$#" -ge 2 ] || usage
+        [ "$1" = "--username" ] || usage
+        username="$2"
+        shift 2
+        [ "$#" -eq 0 ] || usage
+        ;;
+    disable-user|enable-user|logout-all)
+        [ "$#" -ge 2 ] || usage
+        [ "$1" = "--username" ] || usage
+        username="$2"
+        shift 2
+        [ "$#" -eq 0 ] || usage
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+case "$username" in
+    *[!A-Za-z0-9._-]*|"")
+        echo "invalid username" >&2
+        exit 2
+        ;;
+esac
+[ "${#username}" -le 64 ] || { echo "invalid username" >&2; exit 2; }
+
+exec runuser -u tgws-panel -- "$PYTHON" -m app.cli "$cmd" --username "$username" ${must_change:-}

@@ -1,12 +1,13 @@
 [Unit]
 Description=TGWSProxy Admin Panel
 Documentation=file:///opt/tgws-panel/README.md
-After=network-online.target docker.service
-Wants=network-online.target docker.service
+After=network-online.target tgws-panel-helper.service
+Wants=network-online.target tgws-panel-helper.service
 
 [Service]
 Type=simple
-User=root
+User=tgws-panel
+Group=tgws-panel
 WorkingDirectory=/opt/tgws-panel
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
@@ -15,6 +16,33 @@ ExecStart=/opt/tgws-panel/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 80
 Restart=always
 RestartSec=3
 TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ReadWritePaths=/opt/tgws-panel/data /opt/tgws-panel/logs /opt/tgws-panel/config
+ReadOnlyPaths=/opt/tgws-panel/app /opt/tgws-panel/venv /opt/tgws-panel/frontend
+InaccessiblePaths=/opt/tgws-panel/backups
 
 [Install]
 WantedBy=multi-user.target

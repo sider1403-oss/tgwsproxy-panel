@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import alerts, db, dockerctl, logutil, netns, parser, settings
+from . import alerts, db, devices, dockerctl, logutil, netns, parser, settings
 
 STATE: dict = {
     "proxy": {},
@@ -90,6 +90,10 @@ class Collector(threading.Thread):
         now = time.time()
         st = dockerctl.status()
         pid = st.get("pid") if st.get("running") else None
+        try:
+            devices.sync_netmon()
+        except Exception as exc:  # noqa: BLE001 - device hints are best-effort
+            self._log(f"netmon sync failed: {exc}")
 
         if st.get("started_at") != self.started_at:
             self.started_at = st.get("started_at")
@@ -106,7 +110,12 @@ class Collector(threading.Thread):
 
         active: list[dict] = []
         if pid:
-            for c in netns.active_connections(int(st.get("proxy_port") or settings.PROXY_PORT)):
+            try:
+                conns = netns.active_connections(int(st.get("proxy_port") or settings.PROXY_PORT))
+            except Exception as exc:  # noqa: BLE001 - helper outage must not stop collection
+                self._log(f"active connections unavailable: {exc}")
+                conns = []
+            for c in conns:
                 cid = f"{c['ip']}:{c['port']}"
                 first = self.seen.get(cid)
                 if first is None:
@@ -128,7 +137,7 @@ class Collector(threading.Thread):
 
         rx = tx = 0
         if pid:
-            counters = dockerctl.net_counters(pid)
+            counters = dockerctl.net_counters()
             if counters:
                 rx, tx = counters
                 if self.prev_counters and self.prev_counters_at:
@@ -159,7 +168,7 @@ class Collector(threading.Thread):
         cpu_proxy = STATE["metrics"].get("cpu_proxy", 0.0)
         mem_proxy = STATE["metrics"].get("mem_proxy", 0)
         if pid:
-            ps = dockerctl.proc_stat(pid)
+            ps = dockerctl.proc_stat()
             if ps:
                 mem_proxy = ps["rss"]
                 if self.prev_proc:
@@ -170,6 +179,7 @@ class Collector(threading.Thread):
 
         with _lock:
             STATE["proxy"] = {
+                "available": st.get("available", True),
                 "exists": st.get("exists"),
                 "state": st.get("state"),
                 "running": st.get("running"),

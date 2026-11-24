@@ -7,7 +7,7 @@
 (`tg-ws-proxy-rs`, контейнер `tgwsproxy`) на базе Docker Compose.
 
 Панель не устанавливает второй прокси и не меняет его архитектуру: она управляет существующим
-контейнером через `docker compose`, читает его журнал и конфигурацию, показывает сетевые сокеты
+контейнером через привилегированный helper (фиксированный allowlist), читает его журнал и конфигурацию, показывает сетевые сокеты
 и пассивно определяет семейство устройства клиента.
 
 > Проверено с `tg-ws-proxy 2.7.2` (образ `valnesfjord/tg-ws-proxy-rs`).
@@ -27,10 +27,10 @@
   и ссылка для внешних клиентов (см. ниже).
 - **Логи** — уровни INFO/WARN/ERROR/DEBUG, категории, поиск, период, live-поток (SSE),
   детали, экспорт TXT/CSV, маскирование секретов.
-- **Сервис** — запуск/остановка/перезапуск через `docker compose`, проверка порта,
+- **Сервис** — запуск/остановка/перезапуск контейнера через helper, проверка порта,
   `docker logs`, действующая конфигурация, журнал действий администратора.
-- **Диагностика** — быстрые проверки канала и сквозная MTProto-проба через временный
-  контейнер без публикации порта; история проверок.
+- **Диагностика** — быстрые проверки канала; сквозная MTProto-проба отключена
+  (временные контейнеры запрещены), история старых проверок сохранена.
 - **Уведомления** — Telegram-бот и/или webhook, правила, антидребезг, тест, история доставки.
 - **Конфигурация** — просмотр и редактирование известных `TG_*` и `--dc-ip`, валидация,
   автоматический бэкап, применение с откатом, восстановление копий.
@@ -44,23 +44,30 @@
 ## Архитектура
 
 ```
-Браузер ──HTTP/SSE──> FastAPI (uvicorn, :8090, root)
+Браузер ──HTTP/SSE──> tgws-panel (FastAPI/uvicorn :8090, User=tgws-panel)
                           │
-                          ├── docker inspect / docker compose ──> tgwsproxy
-                          ├── docker logs (json-file) ──> SQLite (data/panel.db)
-                          ├── nsenter + ss ──> активные сокеты и RST
-                          ├── /proc, cgroup ──> CPU/RAM/сеть
-                          └── AF_PACKET ──> TCP SYN fingerprint (устройства)
+                          ├── SQLite (data/panel.db)
+                          ├── /run/tgws-panel/helper.sock
+                          │      └── tgws-panel-helper (root, allowlist):
+                          │            docker status/logs/start/stop/restart/version
+                          │            nsenter + ss (только tgwsproxy)
+                          │            config apply/restore, backups, logs, proc
+                          └── /run/tgws-panel-netmon/netmon.sock
+                                 └── tgws-panel-netmon (CAP_NET_RAW):
+                                       AF_PACKET TCP SYN fingerprint
 
 React SPA (Vite) ── статика из frontend/
 ```
 
-Backend работает одним процессом, слушает `0.0.0.0:8090` и запускается от root:
-ему нужны Docker CLI, `nsenter` и raw-socket для пассивного определения устройств.
+Основной процесс **не имеет** root, Docker Socket, `sudo` и группы `docker`.
+Вспомогательный helper — единственный root-компонент; он принимает только
+заранее определённые операции, проверяет `SO_PEERCRED` и параметры.
+`tgws-panel-netmon` работает от отдельного пользователя с `CAP_NET_RAW` и не имеет
+доступа к Docker, `.env` или базе панели.
 
 ## Требования
 
-- Linux (проверено на Debian 12 / LXC), root.
+- Linux (проверено на Debian 12 / LXC), root — только для установки.
 - Python 3.11+.
 - Node.js 18+ и npm — только для сборки фронтенда.
 - Уже установленный `tg-ws-proxy-rs` в Docker Compose (по умолчанию `/opt/tg-ws-proxy`,
@@ -77,11 +84,32 @@ sudo python3 -m venv venv
 sudo venv/bin/pip install -r requirements.txt
 
 cd frontend-src
-sudo npm ci
-sudo npm run build        # результат: /opt/tgws-panel/frontend
+npm ci
+npm run build        # результат: /opt/tgws-panel/frontend
 cd ..
 
+# системные пользователи
+sudo groupadd --system tgws-panel
+sudo useradd --system --gid tgws-panel --home-dir /opt/tgws-panel \
+  --no-create-home --shell /usr/sbin/nologin tgws-panel
+sudo groupadd --system tgws-netmon
+sudo useradd --system --gid tgws-netmon --home-dir /var/lib/tgws-panel-netmon \
+  --no-create-home --shell /usr/sbin/nologin tgws-netmon
+
+# каталоги и права
+sudo install -d -o tgws-netmon -g tgws-netmon -m 700 /var/lib/tgws-panel-netmon
+sudo chown -R tgws-panel:tgws-panel /opt/tgws-panel/data /opt/tgws-panel/logs /opt/tgws-panel/config
+sudo chmod 700 /opt/tgws-panel/data /opt/tgws-panel/config
+sudo chmod 750 /opt/tgws-panel/logs
+sudo chmod 600 /opt/tgws-panel/data/panel.db* /opt/tgws-panel/logs/panel.log*
+sudo chown -R root:root /opt/tgws-panel/backups /opt/tgws-panel/app /opt/tgws-panel/venv /opt/tgws-panel/frontend
+sudo chmod 700 /opt/tgws-panel/backups
+
+# units и CLI
 sudo install -m 644 deploy/tgws-panel.service /etc/systemd/system/tgws-panel.service
+sudo install -m 644 deploy/tgws-panel-helper.service /etc/systemd/system/tgws-panel-helper.service
+sudo install -m 644 deploy/tgws-panel-netmon.service /etc/systemd/system/tgws-panel-netmon.service
+sudo install -m 755 deploy/tgws-panel-admin /usr/local/bin/tgws-panel-admin
 sudo install -m 600 deploy/panel.env.example /etc/tgws-panel.env
 sudo nano /etc/tgws-panel.env      # укажите PANEL_PUBLIC_HOST и пути
 
@@ -90,8 +118,8 @@ sudo install -m 644 deploy/99-tgws-panel.conf /etc/systemd/journald.conf.d/99-tg
 sudo systemctl restart systemd-journald
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now tgws-panel
-sudo systemctl status tgws-panel
+sudo systemctl enable --now tgws-panel-helper tgws-panel-netmon tgws-panel
+sudo systemctl status tgws-panel-helper tgws-panel-netmon tgws-panel
 ```
 
 Откройте `http://<PANEL_PUBLIC_HOST>:8090`.
@@ -134,8 +162,13 @@ sudo tgws-panel-admin reset-password --username <login>
 cd /opt/tgws-panel
 sudo git pull
 sudo venv/bin/pip install -r requirements.txt
-cd frontend-src && sudo npm ci && sudo npm run build && cd ..
-sudo systemctl restart tgws-panel
+cd frontend-src && npm ci && npm run build && cd ..
+sudo install -m 644 deploy/tgws-panel.service /etc/systemd/system/tgws-panel.service
+sudo install -m 644 deploy/tgws-panel-helper.service /etc/systemd/system/tgws-panel-helper.service
+sudo install -m 644 deploy/tgws-panel-netmon.service /etc/systemd/system/tgws-panel-netmon.service
+sudo install -m 755 deploy/tgws-panel-admin /usr/local/bin/tgws-panel-admin
+sudo systemctl daemon-reload
+sudo systemctl restart tgws-panel-helper tgws-panel-netmon tgws-panel
 ```
 
 ## Настройка
@@ -197,15 +230,17 @@ sudo systemctl restart tgws-panel
 - Отдельный **журнал безопасности** фиксирует входы, выходы, смену пароля, сессии,
   CSRF-отказы, доступ без авторизации и административные действия. Пароли, cookie и полные
   секреты в журнал не попадают.
-- Панель работает от root (Docker, `nsenter`, raw socket) и остаётся **только для LAN**:
-  не открывайте 8090 в интернет. Для HTTPS поставьте reverse proxy и укажите его адрес в
-  `PANEL_TRUSTED_PROXIES`, а домен — в `PANEL_ALLOWED_ORIGINS`.
+- Панель работает от `tgws-panel` (без root, Docker Socket, `sudo` и группы `docker`);
+  root-операции выполняет только helper с allowlist, SYN-сниффер — отдельный netmon
+  с `CAP_NET_RAW`. Панель остаётся **только для LAN**: не открывайте 8090 в интернет.
+  Для HTTPS поставьте reverse proxy и укажите его адрес в `PANEL_TRUSTED_PROXIES`,
+  а домен — в `PANEL_ALLOWED_ORIGINS`.
 - Токен Telegram-бота хранится в `/opt/tgws-panel/config/alerts.json` (каталог `700`, файл `600`)
   и маскируется в API.
 
 ## Ограничения
 
-- У `tg-ws-proxy` нет HTTP API: управление идёт через `docker compose`, конфиг и логи.
+- У `tg-ws-proxy` нет HTTP API: управление идёт через helper (Docker/`compose`), конфиг и логи.
 - **Раздельная статистика по ключам невозможна**: прокси не пишет, каким секретом
   авторизовался клиент; MTProto-полезная нагрузка зашифрована.
 - **Устройство клиента** определяется приблизительно по TCP SYN: iOS и macOS неразличимы,
