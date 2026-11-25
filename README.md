@@ -51,7 +51,8 @@ curl -fsSL https://raw.githubusercontent.com/sider1403-oss/tgwsproxy-panel/main/
 - **Лимиты** — ограничены `panel.log`, journald, Docker-лог, БД (retention + мягкий лимит),
   резервные копии; в UI есть карточка «Хранилище и лимиты логов».
 
-## Как это выглядит
+<details>
+<summary><b>Как это выглядит</b> — 16 скриншотов интерфейса (тёмная и светлая темы, мобильная версия, вход)</summary>
 
 Тёмная тема по умолчанию; данные на скриншотах демонстрационные — IP-адреса, ключи и ссылки замаскированы.
 
@@ -82,6 +83,8 @@ curl -fsSL https://raw.githubusercontent.com/sider1403-oss/tgwsproxy-panel/main/
 <p align="center">
   <img src="docs/screenshots/login.jpg" width="55%" alt="Вход в панель">
 </p>
+
+</details>
 
 ## Архитектура
 
