@@ -51,6 +51,38 @@ curl -fsSL https://raw.githubusercontent.com/sider1403-oss/tgwsproxy-panel/main/
 - **Лимиты** — ограничены `panel.log`, journald, Docker-лог, БД (retention + мягкий лимит),
   резервные копии; в UI есть карточка «Хранилище и лимиты логов».
 
+## Как это выглядит
+
+Тёмная тема по умолчанию; данные на скриншотах демонстрационные — IP-адреса, ключи и ссылки замаскированы.
+
+<p align="center">
+  <img src="docs/screenshots/dashboard.jpg" width="100%" alt="Дашборд: статус прокси, трафик, метрики и графики">
+</p>
+
+| | |
+|:--:|:--:|
+| **Подключения** — активные сессии и история | **Клиенты** — агрегация по IP, устройства, трафик |
+| ![](docs/screenshots/connections.jpg) | ![](docs/screenshots/clients.jpg) |
+| **Метрики** — CPU, RAM, сеть по диапазонам | **Трафик** — динамика и топ клиентов |
+| ![](docs/screenshots/metrics.jpg) | ![](docs/screenshots/traffic.jpg) |
+| **DC** — распределение сессий по дата-центрам | **Ключи** — `tg://` ссылки для LAN и интернета |
+| ![](docs/screenshots/dc.jpg) | ![](docs/screenshots/keys.jpg) |
+| **Карточка клиента** — сессии, устройства, DC | **Логи** — уровни, фильтры, live-поток |
+| ![](docs/screenshots/client-detail.jpg) | ![](docs/screenshots/logs.jpg) |
+| **Диагностика** — проверки канала и MTProto-проба | **Сервис** — управление контейнером и лимиты |
+| ![](docs/screenshots/diagnostics.jpg) | ![](docs/screenshots/service.jpg) |
+| **Безопасность** — сессии, журнал, смена пароля | **Конфигурация** — параметры, DC targets, бэкапы |
+| ![](docs/screenshots/security.jpg) | ![](docs/screenshots/config.jpg) |
+
+<p align="center">
+  <img src="docs/screenshots/dashboard-light.jpg" width="49%" alt="Светлая тема">
+  <img src="docs/screenshots/mobile-dashboard.jpg" width="26%" alt="Мобильная версия">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/login.jpg" width="55%" alt="Вход в панель">
+</p>
+
 ## Архитектура
 
 ```
