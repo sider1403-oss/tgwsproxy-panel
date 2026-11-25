@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
         DIAG_WORKER.stop()
 
 
-app = FastAPI(title="TGWSProxy Admin Panel", version="1.1.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="TGWSProxy Admin Panel", version="1.2.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 app.include_router(auth_api.router)
 
 
