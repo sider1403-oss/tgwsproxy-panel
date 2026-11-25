@@ -42,7 +42,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "$(cat title.txt)" \
-            --notes-file body.md \
-            frontend-dist.tar.gz
+          set +e
+          out=$(gh release create "${GITHUB_REF_NAME}" --title "$(cat title.txt)" --notes-file body.md frontend-dist.tar.gz 2>&1)
+          rc=$?
+          echo "$out"
+          if [ $rc -ne 0 ]; then
+            echo "::error title=release-create-failed::rc=$rc $(printf '%s' "$out" | head -c 400 | tr '\n' ' ')"
+          fi
+          exit $rc
