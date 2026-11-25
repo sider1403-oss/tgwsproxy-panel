@@ -1,4 +1,9 @@
-"""Network namespace operations used only by the privileged helper."""
+"""Network namespace operations used only by the privileged helper.
+
+The namespace is entered through Docker's SandboxKey path
+(`nsenter --net=<validated path>`), not through `-t <pid> -n`. This avoids
+requiring CAP_SYS_PTRACE and keeps the helper's capability set unchanged.
+"""
 from __future__ import annotations
 
 import ipaddress
@@ -7,6 +12,25 @@ import re
 from . import docker_core, settings
 
 CONN_RE = re.compile(r"^\s*(\d+)\s+(\d+)\s+(\S+):(\d+)\s+(\S+):(\d+)(?:\s+.*)?$")
+
+
+class NetnsError(RuntimeError):
+    pass
+
+
+def _safe(value: str | None, limit: int = 300) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _run_in_ns(args: list[str], timeout: int = 10) -> str:
+    try:
+        path = docker_core.netns_path()
+    except RuntimeError as exc:
+        raise NetnsError(str(exc)) from exc
+    rc, out, err = docker_core.run(["nsenter", f"--net={path}", *args], timeout=timeout)
+    if rc != 0:
+        raise NetnsError(_safe(err or out) or f"nsenter завершился с кодом {rc}")
+    return out
 
 
 def _split_addr(value: str) -> tuple[str, int] | None:
@@ -21,16 +45,11 @@ def _split_addr(value: str) -> tuple[str, int] | None:
 
 
 def active_connections(port: int | None = None) -> list[dict]:
-    pid = docker_core.container_pid()
-    if not pid:
-        return []
     proxy_port = int(port or settings.PROXY_PORT)
-    rc, out, _err = docker_core.run(
-        ["nsenter", "-t", str(pid), "-n", "ss", "-tin", "state", "established", "sport", "=", f":{proxy_port}"],
+    out = _run_in_ns(
+        ["ss", "-H", "-tin", "state", "established", "sport", "=", f":{proxy_port}"],
         timeout=10,
     )
-    if rc != 0:
-        return []
     conns: list[dict] = []
     current: dict | None = None
     for raw in out.splitlines():
@@ -46,6 +65,9 @@ def active_connections(port: int | None = None) -> list[dict]:
                     current["bytes_received"] = int(m.group(1))
             continue
         parts = raw.split()
+        # Be robust to ss variants that still print a State column.
+        if parts and parts[0] == "ESTAB":
+            parts = parts[1:]
         if len(parts) < 4 or not parts[0].isdigit():
             current = None
             continue
@@ -78,27 +100,19 @@ def kill_connection(ip: str, port: int) -> tuple[bool, str]:
         return False, "Некорректный порт"
     if not (0 < port < 65536):
         return False, "Некорректный порт"
-    pid = docker_core.container_pid()
-    if not pid:
-        return False, "Контейнер не запущен"
     st = docker_core.status()
     proxy_port = int(st.get("proxy_port") or settings.PROXY_PORT)
-    # Only allow a connection that is currently present in the proxy namespace
-    # with the expected local port. This prevents the endpoint from becoming a
-    # generic "kill any socket in the container" primitive.
     match = [
         c
         for c in active_connections(proxy_port)
-        if c.get("ip") == ip and int(c.get("port") or 0) == port and int(c.get("local_port") or 0) == proxy_port
+        if c.get("ip") == ip
+        and int(c.get("port") or 0) == port
+        and int(c.get("local_port") or 0) == proxy_port
     ]
     if not match:
         return False, "Соединение не найдено среди активных подключений tgwsproxy"
-    rc, out, err = docker_core.run(
+    _run_in_ns(
         [
-            "nsenter",
-            "-t",
-            str(pid),
-            "-n",
             "ss",
             "-K",
             "-t",
@@ -113,18 +127,11 @@ def kill_connection(ip: str, port: int) -> tuple[bool, str]:
         ],
         timeout=10,
     )
-    if rc != 0:
-        return False, (err or out or "ss -K завершился с ошибкой").strip()
     return True, "TCP-сессия принудительно закрыта (RST)"
 
 
 def net_counters() -> dict | None:
-    pid = docker_core.container_pid()
-    if not pid:
-        return None
-    rc, out, _err = docker_core.run(["nsenter", "-t", str(pid), "-n", "cat", "/proc/net/dev"], timeout=10)
-    if rc != 0:
-        return None
+    out = _run_in_ns(["cat", "/proc/net/dev"], timeout=10)
     for line in out.splitlines():
         if ":" not in line:
             continue

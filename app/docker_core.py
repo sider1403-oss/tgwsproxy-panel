@@ -11,6 +11,7 @@ import re
 import subprocess
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import settings
 
@@ -80,6 +81,32 @@ def container_pid() -> int | None:
         return None
     pid = info.get("State", {}).get("Pid")
     return int(pid) if pid else None
+
+
+def netns_path() -> str:
+    """Resolve the current tgwsproxy SandboxKey to a validated netns path.
+
+    The path comes only from docker inspect of the fixed container; it must be
+    absolute and its resolved target must stay inside /var/run/docker/netns.
+    """
+    info = inspect_container()
+    if not info:
+        raise RuntimeError("контейнер tgwsproxy не найден")
+    raw = info.get("NetworkSettings", {}).get("SandboxKey")
+    if not isinstance(raw, str) or not raw.startswith("/"):
+        raise RuntimeError("docker inspect не вернул абсолютный SandboxKey")
+    root = Path("/var/run/docker/netns").resolve()
+    try:
+        resolved = Path(raw).resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(f"network namespace недоступен: {exc}") from exc
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError("SandboxKey вне /var/run/docker/netns") from exc
+    if not resolved.is_file():
+        raise RuntimeError("SandboxKey не является файлом namespace")
+    return str(resolved)
 
 
 def image_name() -> str:

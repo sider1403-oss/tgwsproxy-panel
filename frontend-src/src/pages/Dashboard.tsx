@@ -172,7 +172,14 @@ export default function Dashboard() {
 
       {/* stats */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatCard to="/connections?tab=active&from=dashboard" label="Активные подключения" value={fmtNum(m.active_count)} sub="TCP-сессии клиентов" icon={<Activity className="h-4 w-4" />} tone="accent" />
+        <StatCard
+          to="/connections?tab=active&from=dashboard"
+          label="Активные подключения"
+          value={data.active_error ? '—' : fmtNum(m.active_count)}
+          sub={data.active_error ? 'ошибка получения данных' : 'TCP-сессии клиентов'}
+          icon={<Activity className="h-4 w-4" />}
+          tone={data.active_error ? 'bad' : 'accent'}
+        />
         <StatCard to="/clients?range=24h" label="Всего клиентов" value={fmtNum(data.totals.clients_24h)} sub={`за 24 ч · с запуска ${fmtNum(data.totals.clients)}`} icon={<Users className="h-4 w-4" />} />
         <StatCard
           to="/logs?level=ERROR&range=24h&from=dashboard"

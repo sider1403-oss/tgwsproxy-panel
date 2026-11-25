@@ -178,6 +178,7 @@ export interface Overview {
   errors: ErrorCounts
   warnings: ErrorCounts
   active: ActiveConnection[]
+  active_error?: string | null
   series: { traffic: TrafficPoint[]; connections: ConnPoint[] }
   dc: DcRow[]
   recent_errors: LogEvent[]

@@ -53,7 +53,7 @@ def version(refresh: bool = False) -> str | None:
 def net_counters() -> tuple[int, int] | None:
     try:
         data = helper_client.call("net.counters", timeout=15)
-    except helper_client.HelperUnavailable:
+    except (helper_client.HelperUnavailable, helper_client.HelperError):
         return None
     if not data:
         return None
@@ -66,7 +66,7 @@ def net_counters() -> tuple[int, int] | None:
 def proc_stat() -> dict | None:
     try:
         return helper_client.call("container.proc", timeout=10)
-    except helper_client.HelperUnavailable:
+    except (helper_client.HelperUnavailable, helper_client.HelperError):
         return None
 
 

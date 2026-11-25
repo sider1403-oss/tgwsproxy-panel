@@ -10,6 +10,7 @@ from . import alerts, db, devices, dockerctl, logutil, netns, parser, settings
 STATE: dict = {
     "proxy": {},
     "active": [],
+    "active_error": None,
     "metrics": {
         "active_count": 0,
         "speed_in": 0.0,
@@ -34,6 +35,7 @@ def snapshot() -> dict:
         return {
             "proxy": dict(STATE["proxy"]),
             "active": [dict(c) for c in STATE["active"]],
+            "active_error": STATE.get("active_error"),
             "metrics": dict(STATE["metrics"]),
             "updated_at": STATE["updated_at"],
             "logs": dict(STATE["logs"]),
@@ -79,6 +81,8 @@ class Collector(threading.Thread):
             try:
                 self.tick()
             except Exception as exc:  # noqa: BLE001
+                with _lock:
+                    STATE["active_error"] = f"collector: {str(exc)[:300]}"
                 self._log(f"collector error: {exc}")
             elapsed = time.time() - started
             self.stop_event.wait(max(0.2, 2.0 - elapsed))
@@ -109,10 +113,12 @@ class Collector(threading.Thread):
         version = self.version or db.get_meta("proxy_version")
 
         active: list[dict] = []
+        active_error: str | None = None
         if pid:
             try:
                 conns = netns.active_connections(int(st.get("proxy_port") or settings.PROXY_PORT))
             except Exception as exc:  # noqa: BLE001 - helper outage must not stop collection
+                active_error = str(exc)[:500] or type(exc).__name__
                 self._log(f"active connections unavailable: {exc}")
                 conns = []
             for c in conns:
@@ -196,6 +202,7 @@ class Collector(threading.Thread):
                 "version": version,
             }
             STATE["active"] = active
+            STATE["active_error"] = active_error
             STATE["metrics"] = {
                 "active_count": len(active),
                 "speed_in": round(self.speeds[0], 1),

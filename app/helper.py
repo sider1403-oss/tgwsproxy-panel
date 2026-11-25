@@ -279,6 +279,9 @@ def handle(conn: socket.socket) -> None:
     except ValueError as exc:
         _log(f"op rejected uid={uid} pid={pid}: {exc}")
         _send(conn, json.dumps({"ok": False, "error": str(exc), "code": "validation"}, ensure_ascii=False).encode() + b"\n")
+    except net_ops.NetnsError as exc:
+        _log(f"op netns failed uid={uid} pid={pid}: {exc}")
+        _send(conn, json.dumps({"ok": False, "error": str(exc), "code": "netns"}, ensure_ascii=False).encode() + b"\n")
     except (BrokenPipeError, ConnectionResetError):
         return
     except Exception as exc:  # noqa: BLE001 - never leak a traceback to the panel

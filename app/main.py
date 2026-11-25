@@ -298,6 +298,7 @@ def build_overview(range_key: str = "1h") -> dict:
         "errors": {"total": errors_total["n"] if errors_total else 0, "last_24h": errors_24h["n"] if errors_24h else 0},
         "warnings": {"total": warn_total["n"] if warn_total else 0, "last_24h": warn_24h["n"] if warn_24h else 0},
         "active": snap["active"],
+        "active_error": snap.get("active_error"),
         "series": series,
         "dc": [row_dict(r) for r in dc_rows],
         "recent_errors": [dict(row_dict(r), message=mask_text(r["message"])) for r in recent_errors],
@@ -598,6 +599,8 @@ def api_metrics_history(
 @app.get("/api/connections/active")
 def api_connections_active():
     snap = collector.snapshot()
+    if snap.get("active_error"):
+        raise HTTPException(503, f"Не удалось получить активные подключения: {snap['active_error']}")
     proxy_port = int(snap["proxy"].get("proxy_port") or settings.PROXY_PORT)
     items = sorted(snap["active"], key=lambda c: c.get("first_seen") or "")
     for c in items:
