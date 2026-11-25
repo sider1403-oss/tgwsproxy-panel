@@ -38,15 +38,25 @@ jobs:
           tail -n +2 notes.md > body.md
           cat title.txt body.md
 
-      - name: Create GitHub release
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set +e
-          out=$(gh release create "${GITHUB_REF_NAME}" --title "$(cat title.txt)" --notes-file body.md frontend-dist.tar.gz 2>&1)
+          set -uo pipefail
+          out=$(
+            if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+              echo "release ${GITHUB_REF_NAME} already exists: uploading assets" >&2
+              gh release upload "${GITHUB_REF_NAME}" frontend-dist.tar.gz --clobber
+            else
+              gh release create "${GITHUB_REF_NAME}" \
+                --title "$(cat title.txt)" \
+                --notes-file body.md \
+                frontend-dist.tar.gz
+            fi 2>&1
+          )
           rc=$?
           echo "$out"
-          if [ $rc -ne 0 ]; then
-            echo "::error title=release-create-failed::rc=$rc $(printf '%s' "$out" | head -c 400 | tr '\n' ' ')"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=release-failed::rc=$rc $(printf '%s' "$out" | head -c 400 | tr '\n' ' ')"
           fi
-          exit $rc
+          exit "$rc"
