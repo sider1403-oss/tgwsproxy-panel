@@ -1,14 +1,23 @@
 # tgwsproxy-panel
 
 [![CI](https://github.com/sider1403-oss/tgwsproxy-panel/actions/workflows/ci.yml/badge.svg)](https://github.com/sider1403-oss/tgwsproxy-panel/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/sider1403-oss/tgwsproxy-panel?label=release)](https://github.com/sider1403-oss/tgwsproxy-panel/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Веб-панель администрирования для уже работающего
-[Telegram WebSocket Proxy](https://github.com/valnesfjord/tg-ws-proxy-rs)
-(`tg-ws-proxy-rs`, контейнер `tgwsproxy`) на базе Docker Compose.
+Веб-панель для **уже работающего** [Telegram WebSocket Proxy](https://github.com/valnesfjord/tg-ws-proxy-rs)
+(`tg-ws-proxy-rs`, контейнер `tgwsproxy`, Docker Compose): живой дашборд, клиенты и устройства,
+ключи `tg://`, логи, диагностика, конфигурация с откатом, уведомления и аудит — в одном интерфейсе.
 
-Панель не устанавливает второй прокси и не меняет его архитектуру: она управляет существующим
-контейнером через привилегированный helper (фиксированный allowlist), читает его журнал и конфигурацию, показывает сетевые сокеты
-и пассивно определяет семейство устройства клиента.
+Панель не ставит второй прокси и не меняет его архитектуру: она управляет существующим контейнером,
+читает его журнал и конфигурацию, смотрит сетевые сокеты и пассивно определяет семейство устройства
+клиента. С версии 1.2.0 панель работает без root: привилегии вынесены в отдельные helper- и
+netmon-сервисы с фиксированным allowlist операций.
+
+**Установка одной командой** (Debian 12 / Ubuntu, root; нужен настроенный `tg-ws-proxy-rs`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sider1403-oss/tgwsproxy-panel/main/install.sh | sudo bash
+```
 
 > Проверено с `tg-ws-proxy 2.7.2` (образ `valnesfjord/tg-ws-proxy-rs`).
 > Панель рассчитана на доверенную локальную сеть и требует входа администратора.
@@ -77,6 +86,45 @@ React SPA (Vite) ── статика из frontend/
 
 ## Установка
 
+Одной командой (Debian 12 / Ubuntu, от root; Docker и настроенный `tg-ws-proxy-rs` уже должны быть):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sider1403-oss/tgwsproxy-panel/main/install.sh | sudo bash
+```
+
+Что делает скрипт:
+
+1. находит последний релиз и скачивает его исходники;
+2. ставит `python3-venv` и зависимости панели в `/opt/tgws-panel/venv`;
+3. берёт готовый фронтенд из ассетов релиза, а если его нет — собирает через Node.js;
+4. создаёт системных пользователей `tgws-panel` и `tgws-netmon`, каталоги данных и права;
+5. создаёт `/etc/tgws-panel.env` (адрес панели, порт, путь к прокси); существующий файл не перезаписывает;
+6. ставит три systemd-юнита, `tgws-panel-admin`, лимиты journald и запускает сервисы;
+7. ждёт `GET /api/health` и печатает адрес панели.
+
+Параметры передаются после `-s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sider1403-oss/tgwsproxy-panel/main/install.sh \
+  | sudo bash -s -- --version v1.2.0 --host 192.168.50.5 --port 8090
+```
+
+| Параметр | По умолчанию |
+| --- | --- |
+| `--version <tag>` | последний релиз |
+| `--prefix <dir>` | `/opt/tgws-panel` |
+| `--proxy-dir <dir>` | `/opt/tg-ws-proxy` |
+| `--port <port>` | `8090` |
+| `--host <ip/имя>` | первый IP хоста |
+| `--from-local <dir>` | локальный checkout вместо загрузки |
+| `--dry-run` | показать план и ничего не менять |
+
+Требования: Linux с systemd, Python 3.11+, Docker. Node.js нужен только если у релиза нет
+готового фронтенда (начиная с `v1.2.0` он публикуется ассетом `frontend-dist.tar.gz`).
+
+<details>
+<summary>Ручная установка из исходников (без скрипта)</summary>
+
 ```bash
 sudo git clone https://github.com/sider1403-oss/tgwsproxy-panel.git /opt/tgws-panel
 cd /opt/tgws-panel
@@ -123,8 +171,10 @@ sudo systemctl enable --now tgws-panel-helper tgws-panel-netmon tgws-panel
 sudo systemctl status tgws-panel-helper tgws-panel-netmon tgws-panel
 ```
 
-Откройте `http://<PANEL_PUBLIC_HOST>:8090`.
 
+</details>
+
+Откройте `http://<PANEL_PUBLIC_HOST>:8090`.
 ### Первый вход
 
 При первом запуске администратора ещё нет. Панель откроет страницу первоначальной настройки:
@@ -160,18 +210,18 @@ sudo tgws-panel-admin reset-password --username <login>
 ### Обновление
 
 ```bash
-cd /opt/tgws-panel
-sudo git pull
-sudo venv/bin/pip install -r requirements.txt
-cd frontend-src && sudo npm ci && sudo npm run build && cd ..
-sudo install -m 644 deploy/tgws-panel.service /etc/systemd/system/tgws-panel.service
-sudo install -m 644 deploy/tgws-panel-helper.service /etc/systemd/system/tgws-panel-helper.service
-sudo install -m 644 deploy/tgws-panel-netmon.service /etc/systemd/system/tgws-panel-netmon.service
-sudo install -m 755 deploy/tgws-panel-admin /usr/local/bin/tgws-panel-admin
-sudo systemctl daemon-reload
-sudo systemctl restart tgws-panel-helper tgws-panel-netmon tgws-panel
+curl -fsSL https://raw.githubusercontent.com/sider1403-oss/tgwsproxy-panel/main/install.sh | sudo bash
 ```
 
+Скрипт идемпотентен: сохраняет `/etc/tgws-panel.env`, `data/`, `config/` и `backups/`,
+заменяет код и фронтенд, перезапускает сервисы. Для конкретной версии:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sider1403-oss/tgwsproxy-panel/main/install.sh \
+  | sudo bash -s -- --version v1.2.0
+```
+
+Ручное обновление — те же шаги, что и при ручной установке (см. выше).
 ## Настройка
 
 Переменные читаются из `/etc/tgws-panel.env` (systemd `EnvironmentFile`):
