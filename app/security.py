@@ -504,10 +504,13 @@ def cleanup() -> None:
 
 
 def harden_permissions() -> None:
-    """Keep panel data, backups and secrets readable only by root."""
+    """Keep panel data/secrets readable only by the panel user.
+
+    Backups are owned by root and managed exclusively by the privileged helper;
+    the panel must not chmod or traverse them.
+    """
     for path, mode in (
         (settings.DATA_DIR, 0o700),
-        (settings.BACKUP_DIR, 0o700),
         (settings.CONFIG_DIR, 0o700),
         (settings.LOG_DIR, 0o750),
     ):
@@ -522,18 +525,6 @@ def harden_permissions() -> None:
                 path.chmod(0o600)
         except OSError:
             pass
-    try:
-        settings.CONFIG_DIR.joinpath("setup_code").chmod(0o600)
-    except OSError:
-        pass
-    try:
-        for item in settings.BACKUP_DIR.rglob("*"):
-            try:
-                item.chmod(0o700 if item.is_dir() else 0o600)
-            except OSError:
-                pass
-    except OSError:
-        pass
 
 
 def security_overview(user: dict, sid: str) -> dict:

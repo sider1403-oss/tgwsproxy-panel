@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDownToLine, ArrowUpFromLine, Info, RefreshCw, Search, Skull } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ArrowDownToLine, ArrowLeft, ArrowUpFromLine, Info, RefreshCw, Search, Skull } from 'lucide-react'
 import type { ActiveConnection, HistoryResponse, Session } from '../lib/types'
 import { api } from '../lib/api'
 import { usePolling } from '../lib/hooks'
@@ -9,18 +10,29 @@ import { DeviceBadge } from '../components/DeviceBadge'
 import { cn } from '../lib/utils'
 
 export default function Connections() {
-  const [tab, setTab] = useState<'active' | 'history'>('active')
+  const [params, setParams] = useSearchParams()
+  const [tab, setTab] = useState<'active' | 'history'>(params.get('tab') === 'history' ? 'history' : 'active')
+  const from = params.get('from') === 'dashboard'
+  const changeTab = (value: string) => {
+    const next = new URLSearchParams(params)
+    next.set('tab', value)
+    setParams(next, { replace: true })
+    setTab(value as 'active' | 'history')
+  }
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs
-          value={tab}
-          onChange={(v) => setTab(v as 'active' | 'history')}
-          items={[
+        <div className="flex flex-wrap items-center gap-3">
+          {from ? (
+            <Link to="/" className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-card/60 px-2.5 py-1.5 text-xs text-muted transition hover:bg-ink/5 hover:text-ink">
+              <ArrowLeft className="h-3.5 w-3.5" /> На дашборд
+            </Link>
+          ) : null}
+          <Tabs value={tab} onChange={changeTab} items={[
             { value: 'active', label: 'Активные' },
             { value: 'history', label: 'История' },
-          ]}
-        />
+          ]} />
+        </div>
         <div className="text-[11px] text-muted">Данные: сетевой namespace контейнера + журнал сессий прокси</div>
       </div>
       {tab === 'active' ? <ActiveTab /> : <HistoryTab />}
@@ -120,6 +132,7 @@ function ActiveTab() {
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по IP или порту" className="pl-9" />
           </div>
           <Badge tone="info">{loading ? 'обновление…' : `${items.length} сессий`}</Badge>
+          {data?.updated_at ? <span className="text-[11px] text-muted">обновлено {fmtRelative(data.updated_at)}</span> : null}
           <Button className="ml-auto" onClick={() => setData(null)} title="Перезапросить">
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             Обновить
@@ -283,10 +296,11 @@ function ActiveTab() {
 }
 
 function HistoryTab() {
-  const [ip, setIp] = useState('')
-  const [range, setRange] = useState('24h')
+  const [params] = useSearchParams()
+  const [ip, setIp] = useState(params.get('ip') || '')
+  const [range, setRange] = useState(params.get('range') || '24h')
   const [closedBy, setClosedBy] = useState('')
-  const [dc, setDc] = useState('')
+  const [dc, setDc] = useState(params.get('dc') || '')
   const [sort, setSort] = useState('ended_at')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
   const [offset, setOffset] = useState(0)

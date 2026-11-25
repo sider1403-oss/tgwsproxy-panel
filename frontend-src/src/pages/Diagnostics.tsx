@@ -98,9 +98,7 @@ export default function Diagnostics() {
               <Button variant="primary" onClick={() => void runQuick()} loading={busy === 'quick'} disabled={busy !== null}>
                 <RefreshCw className="h-4 w-4" /> Быстрая проверка
               </Button>
-              <Button variant="warn" onClick={() => setConfirmProbe(true)} loading={busy === 'probe'} disabled={busy !== null}>
-                <Zap className="h-4 w-4" /> Сквозная проверка
-              </Button>
+              <Badge tone="muted">Сквозная проверка отключена</Badge>
             </div>
           </div>
           {error ? <div className="mt-3 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-xs text-bad">{error}</div> : null}
@@ -115,7 +113,7 @@ export default function Diagnostics() {
             <li>• DNS и TCP до CF-доменов (ws:// порт 80 при <span className="font-mono">TG_CF_DISABLE_TLS</span>)</li>
             <li>• прямой доступ к DC (ожидаемо заблокирован)</li>
             <li>• предупреждения и сессии за 10 минут</li>
-            <li>• сквозная проверка: временный контейнер без публикации порта, MTProto-запрос через CF</li>
+            <li>• сквозная проверка отключена: временные контейнеры запрещены</li>
           </ul>
         </Card>
       </div>
@@ -212,7 +210,7 @@ export default function Diagnostics() {
             ) : null}
           </div>
         ) : (
-          <Empty title="Сквозная проверка не запускалась" hint="Запускает временный контейнер без публикации порта, проверяет все CF-домены и делает реальный MTProto-запрос. Занимает около 10 секунд и не влияет на рабочий прокси." />
+          <Empty title="Сквозная проверка отключена" hint="В целях безопасности панель больше не создаёт временные контейнеры. История старых проверок сохранена; быстрая проверка работает." />
         )}
       </Card>
 

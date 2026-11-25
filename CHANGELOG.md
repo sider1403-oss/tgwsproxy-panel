@@ -5,6 +5,36 @@
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-11-25
+
+### Added
+- Интерактивный дашборд: карточки стали кликабельными и ведут в детали — `/service`, `/traffic`,
+  `/connections?tab=active`, `/clients`, `/metrics/cpu`, `/logs?level=ERROR|WARN`; работают hover,
+  focus-ring и переходы с клавиатуры.
+- Новые разделы: «Клиенты» (`/clients`, `/clients/:id`), «Метрики» (`/metrics`), «Трафик» (`/traffic`),
+  «DC» (`/dc`) с графиками, сводками и детализацией по диапазонам.
+- API для аналитики (`clients`, `metrics`, `traffic`, `dc`) и индекс в БД для выборок по клиентам.
+- `tgws-panel-helper.service`: root-helper с Unix-сокетом, `SO_PEERCRED` и allowlist операций
+  (Docker только `tgwsproxy`, nsenter/ss, конфигурация, резервные копии, чтение Docker-логов).
+- `tgws-panel-netmon.service`: AF_PACKET-сниффер SYN с `CAP_NET_RAW`.
+
+### Changed
+- Основной процесс переведён на системного пользователя `tgws-panel` без root, Docker Socket,
+  `sudo` и группы `docker`.
+- Docker/nsenter/конфигурация/бэкапы/логи вынесены в helper; SYN-сниффер — в netmon, без доступа
+  к Docker, `.env` и базе панели.
+- Панель, helper и netmon получили systemd-hardening (`ProtectSystem=strict`, `NoNewPrivileges`,
+  `PrivateTmp`, `CapabilityBoundingSet`, `InaccessiblePaths` и др.).
+- Резервные копии остаются root-only; скачивание идёт через helper после подтверждения пароля.
+- Сквозная диагностическая проба с временным контейнером отключена.
+
+### Fixed
+- Активные подключения: вход в netns через Docker `SandboxKey`
+  (`nsenter --net=/run/docker/netns/<id>`) без `CAP_SYS_PTRACE` — список соединений больше не пустой.
+
+### Docs
+- Команды сборки фронтенда для root-owned `frontend/`.
+
 ## [1.1.0] — 2026-11-23
 
 ### Added

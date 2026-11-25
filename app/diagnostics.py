@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config_editor, db, dockerctl, keys, logutil, mask, settings
+from . import config_editor, config_schema, db, dockerctl, helper_client, keys, logutil, mask, settings
 
 DOMAIN_RE = re.compile(r"kws\d+\.[A-Za-z0-9.-]+")
 RESULT_LINE_RE = re.compile(r"^\s*([A-Za-z0-9.:_-]+)\s+\.\.\.\s+\[(OK|FAIL|SKIP)\s*\]\s*(\d+)?\s*ms")
@@ -178,7 +178,7 @@ def _check_cf() -> dict:
 def _check_dc() -> dict:
     try:
         svc = config_editor.compose_service()
-        targets = config_editor.parse_dc_targets([str(x) for x in (svc.get("command") or [])])
+        targets = config_schema.parse_dc_targets([str(x) for x in (svc.get("command") or [])])
     except Exception as exc:  # noqa: BLE001
         return {"id": "dc", "label": "Прямые DC", "status": "skip", "detail": f"не удалось прочитать конфигурацию: {exc}"}
     if not targets:
@@ -240,13 +240,16 @@ def quick_check() -> dict:
         }
     )
 
-    rc, out, err = dockerctl.compose(["config", "-q"], timeout=20)
+    try:
+        validated = helper_client.call("config.validate", timeout=30)
+    except (helper_client.HelperUnavailable, helper_client.HelperError) as exc:
+        validated = {"ok": False, "error": str(exc)}
     checks.append(
         {
             "id": "config",
             "label": "Конфигурация compose",
-            "status": "ok" if rc == 0 else "fail",
-            "detail": "валидна" if rc == 0 else (err or out).strip()[:300],
+            "status": "ok" if validated.get("ok") else "fail",
+            "detail": "валидна" if validated.get("ok") else str(validated.get("error") or "ошибка проверки")[:300],
         }
     )
 
@@ -289,82 +292,7 @@ def quick_check() -> dict:
 
 
 def full_probe() -> dict:
-    started = time.perf_counter()
-    env = config_editor.effective_env()
-    key = keys.key_of(env.get("TG_SECRET", ""))
-    image = dockerctl.image_name()
-    if not key:
-        return _store("probe", False, "fail", "Не удалось выделить ключ из TG_SECRET", {"output": ""}, 0)
-    if not image:
-        return _store("probe", False, "fail", "Не удалось определить образ прокси", {"output": ""}, 0)
-
-    clean = {
-        k: v
-        for k, v in env.items()
-        if k not in ("TG_SECRET", "TG_LISTEN_FAKETLS_DOMAIN", "TG_HOST", "TG_PORT", "TG_LINK_IP", "TG_LOG_FILE")
-    }
-    clean["TG_SECRET"] = key
-    port = random.randint(17100, 18999)
-    name = f"tgws-panel-probe-{int(time.time())}"
-    tmp_path = Path(settings.DATA_DIR) / f"probe-{int(time.time())}.env"
-    try:
-        tmp_path.write_text("\n".join(f"{k}={v}" for k, v in clean.items()) + "\n", encoding="utf-8")
-        tmp_path.chmod(0o600)
-        cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "--name",
-            name,
-            "--env-file",
-            str(tmp_path),
-            "--entrypoint",
-            "tg-ws-proxy",
-            image,
-            "--check-listener",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--link-ip",
-            "127.0.0.1",
-        ]
-        rc, out, err = dockerctl.run(cmd, timeout=170)
-    finally:
-        dockerctl.run(["docker", "rm", "-f", name], timeout=15)
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    raw = (out or "") + ("\n" + err if err else "")
-    masked = mask.mask_text(raw)
-    domains = []
-    for line in raw.splitlines():
-        m = RESULT_LINE_RE.match(line)
-        if m:
-            domains.append(
-                {
-                    "host": m.group(1),
-                    "status": m.group(2).lower(),
-                    "latency_ms": int(m.group(3)) if m.group(3) else None,
-                }
-            )
-    ok_hosts = sum(1 for d in domains if d["status"] == "ok")
-    if "Result: all checks passed" in raw:
-        status, ok, summary = "ok", True, f"Сквозная проверка пройдена: {ok_hosts} целей, MTProto-проба отвечает"
-    elif "nothing was checked" in raw:
-        status, ok, summary = "warn", False, "Проверка не выполнена: все пробы пропущены"
-    else:
-        status, ok, summary = "fail", False, "Сквозная проверка не пройдена: ни один маршрут не достиг DC"
-    duration = int((time.perf_counter() - started) * 1000)
-    detail = {
-        "output": masked[-30000:],
-        "domains": domains,
-        "exit_code": rc,
-        "probe_port": port,
-    }
-    return _store("probe", ok, status, summary, detail, duration)
+    raise RuntimeError("Сквозная проверка отключена: временные контейнеры запрещены")
 
 
 class Worker(threading.Thread):

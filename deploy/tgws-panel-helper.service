@@ -1,0 +1,50 @@
+[Unit]
+Description=TGWSProxy panel privileged helper
+Documentation=file:///opt/tgws-panel/README.md
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+Before=tgws-panel.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/tgws-panel
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HOME=/run/tgws-panel
+Environment=DOCKER_CONFIG=/run/tgws-panel/.docker
+Environment=TGWS_HELPER_REQUIRE_CGROUP=1
+EnvironmentFile=-/etc/tgws-panel.env
+ExecStart=/opt/tgws-panel/venv/bin/python -m app.helper
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN CAP_SYS_ADMIN CAP_NET_ADMIN
+AmbientCapabilities=
+UMask=0077
+RuntimeDirectory=tgws-panel
+RuntimeDirectoryMode=0755
+ReadWritePaths=/opt/tg-ws-proxy /opt/tgws-panel/backups /run/tgws-panel
+ReadOnlyPaths=/opt/tgws-panel/app /opt/tgws-panel/venv /opt/tgws-panel/frontend
+InaccessiblePaths=/opt/tgws-panel/data /opt/tgws-panel/config /opt/tgws-panel/logs
+
+[Install]
+WantedBy=multi-user.target

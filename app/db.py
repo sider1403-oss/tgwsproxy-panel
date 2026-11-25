@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_ended ON sessions(ended_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_ip ON sessions(client_ip);
+CREATE INDEX IF NOT EXISTS idx_sessions_client_ended ON sessions(client_ip, ended_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_ended_client ON sessions(ended_at, client_ip);
 
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Activity, AlertTriangle, ArrowDownUp, Cpu, Gauge, HardDrive, KeyRound, Users } from 'lucide-react'
 import type { Overview } from '../lib/types'
 import { api } from '../lib/api'
@@ -17,7 +18,14 @@ const RANGES = [
 ]
 
 export default function Dashboard() {
-  const [range, setRange] = useState('1h')
+  const [params, setParams] = useSearchParams()
+  const paramsRange = params.get('range') || '1h'
+  const range = RANGES.some((item) => item.value === paramsRange) ? paramsRange : '1h'
+  const setRange = (value: string) => {
+    const next = new URLSearchParams(params)
+    next.set('range', value)
+    setParams(next, { replace: true })
+  }
   const [data, setData] = useState<Overview | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { connected } = useSse<Overview>(`/api/stream?range=${range}`, 'overview', true, (d) => {
@@ -69,7 +77,8 @@ export default function Dashboard() {
     <div className="space-y-4 sm:space-y-5">
       {/* hero */}
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <Card className="relative overflow-hidden">
+        <Link to="/service?from=dashboard" className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
+        <Card className="relative cursor-pointer overflow-hidden transition duration-150 hover:border-accent/40 hover:shadow-lg">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(500px_180px_at_15%_0%,rgba(34,211,238,0.10),transparent_70%)]" />
           <div className="relative flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -125,8 +134,10 @@ export default function Dashboard() {
             </div>
           </div>
         </Card>
+        </Link>
 
-        <Card>
+        <Link to="/traffic?range=24h" className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
+        <Card className="h-full cursor-pointer transition duration-150 hover:border-accent/40 hover:shadow-lg">
           <CardTitle right={<Gauge className="h-4 w-4 text-muted" />}>Трафик</CardTitle>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -156,13 +167,22 @@ export default function Dashboard() {
             <div className="mt-1 text-[10px] text-muted/70">сессий с запуска: {fmtNum(data.totals.sessions)}</div>
           </div>
         </Card>
+        </Link>
       </div>
 
       {/* stats */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatCard label="Активные подключения" value={fmtNum(m.active_count)} sub="TCP-сессии клиентов" icon={<Activity className="h-4 w-4" />} tone="accent" />
-        <StatCard label="Всего клиентов" value={fmtNum(data.totals.clients_24h)} sub={`за 24 ч · с запуска ${fmtNum(data.totals.clients)}`} icon={<Users className="h-4 w-4" />} />
         <StatCard
+          to="/connections?tab=active&from=dashboard"
+          label="Активные подключения"
+          value={data.active_error ? '—' : fmtNum(m.active_count)}
+          sub={data.active_error ? 'ошибка получения данных' : 'TCP-сессии клиентов'}
+          icon={<Activity className="h-4 w-4" />}
+          tone={data.active_error ? 'bad' : 'accent'}
+        />
+        <StatCard to="/clients?range=24h" label="Всего клиентов" value={fmtNum(data.totals.clients_24h)} sub={`за 24 ч · с запуска ${fmtNum(data.totals.clients)}`} icon={<Users className="h-4 w-4" />} />
+        <StatCard
+          to="/logs?level=ERROR&range=24h&from=dashboard"
           label="Ошибки"
           value={fmtNum(data.errors.last_24h)}
           sub={`за 24 ч · в журнале ${fmtNum(data.errors.total)}`}
@@ -170,16 +190,17 @@ export default function Dashboard() {
           tone={data.errors.last_24h > 0 ? 'bad' : 'default'}
         />
         <StatCard
+          to="/logs?level=WARN&range=24h&from=dashboard"
           label="Предупреждения"
           value={fmtNum(data.warnings?.last_24h ?? 0)}
           sub={`за 24 ч · в журнале ${fmtNum(data.warnings?.total ?? 0)}`}
           icon={<AlertTriangle className="h-4 w-4" />}
           tone={(data.warnings?.last_24h ?? 0) > 0 ? 'warn' : 'default'}
         />
-        <StatCard label="CPU LXC" value={`${m.cpu_host.toFixed(1)} %`} sub={`1 vCPU · RAM ${memPct}%`} icon={<Cpu className="h-4 w-4" />} />
-        <StatCard label="RAM сервера" value={fmtBytes(m.mem_used)} sub={`из ${fmtBytes(m.mem_total)}`} icon={<HardDrive className="h-4 w-4" />} />
-        <StatCard label="Скорость входящая" value={fmtSpeed(m.speed_in)} sub="в сторону прокси" icon={<ArrowDownUp className="h-4 w-4" />} />
-        <StatCard label="Скорость исходящая" value={fmtSpeed(m.speed_out)} sub="от прокси клиентам" icon={<ArrowDownUp className="h-4 w-4" />} />
+        <StatCard to={`/metrics/cpu?range=${range}`} label="CPU LXC" value={`${m.cpu_host.toFixed(1)} %`} sub={`1 vCPU · RAM ${memPct}%`} icon={<Cpu className="h-4 w-4" />} />
+        <StatCard to={`/metrics/memory?range=${range}`} label="RAM сервера" value={fmtBytes(m.mem_used)} sub={`из ${fmtBytes(m.mem_total)}`} icon={<HardDrive className="h-4 w-4" />} />
+        <StatCard to={`/metrics/speed?dir=in&range=${range}`} label="Скорость входящая" value={fmtSpeed(m.speed_in)} sub="в сторону прокси" icon={<ArrowDownUp className="h-4 w-4" />} />
+        <StatCard to={`/metrics/speed?dir=out&range=${range}`} label="Скорость исходящая" value={fmtSpeed(m.speed_out)} sub="от прокси клиентам" icon={<ArrowDownUp className="h-4 w-4" />} />
       </div>
 
       {/* charts */}
@@ -202,7 +223,8 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        <Card>
+        <Link to={`/dc?range=${range}`} className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
+        <Card className="h-full cursor-pointer transition duration-150 hover:border-accent/40 hover:shadow-lg">
           <CardTitle>Распределение по DC</CardTitle>
           {data.dc.length ? <DcChart data={data.dc} /> : <Empty title="Нет сессий" />}
           <div className="mt-2 space-y-1.5">
@@ -216,10 +238,12 @@ export default function Dashboard() {
             ))}
           </div>
         </Card>
+        </Link>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card>
+        <Link to="/connections?tab=active&from=dashboard" className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
+        <Card className="h-full cursor-pointer transition duration-150 hover:border-accent/40 hover:shadow-lg">
           <CardTitle right={<span className="text-[11px] text-muted">с момента запуска панели</span>}>
             Активные подключения
           </CardTitle>
@@ -229,8 +253,10 @@ export default function Dashboard() {
             <Empty title="Накапливаем данные" hint="График заполняется по мере работы панели (каждые 5 секунд)." />
           )}
         </Card>
+        </Link>
 
-        <Card>
+        <Link to="/logs?level=WARN,ERROR&range=24h&from=dashboard" className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
+        <Card className="h-full cursor-pointer transition duration-150 hover:border-accent/40 hover:shadow-lg">
           <CardTitle right={<Badge tone="warn">последние события</Badge>}>Предупреждения и ошибки</CardTitle>
           {data.recent_errors.length ? (
             <div className="space-y-2">
@@ -249,6 +275,7 @@ export default function Dashboard() {
             <Empty title="Ошибок нет" hint="В логах прокси нет предупреждений за доступный период." />
           )}
         </Card>
+        </Link>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">

@@ -1,13 +1,17 @@
-"""Parse the proxy's tracing log lines into sessions and events."""
+"""Parse the proxy's tracing log lines into sessions and events.
+
+The Docker json log files are root-owned and live under /var/lib/docker, so the
+panel reads them through the helper in bounded chunks and keeps offsets in its
+own database.
+"""
 from __future__ import annotations
 
+import base64
 import json
-import os
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 
-from . import db, dockerctl, settings
+from . import config_schema, db, helper_client
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 MSG_RE = re.compile(
@@ -120,89 +124,80 @@ class LogIngestor:
     def __init__(self) -> None:
         self._last_container: str | None = None
 
-    def _log_files(self) -> list[Path]:
-        info = dockerctl.inspect_container()
-        if not info:
-            return []
-        log_path = info.get("LogPath")
-        if not log_path:
-            return []
-        base = Path(log_path)
-        if not base.exists():
-            return []
-        files = [base]
+    def _log_files(self) -> list[dict]:
         try:
-            files.extend(sorted(base.parent.glob(base.name + ".*")))
-        except OSError:
-            pass
-        # Process oldest first, current file last.
-        files.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0)
-        return files
+            return list(helper_client.call("logs.list", timeout=10).get("items") or [])
+        except (helper_client.HelperUnavailable, helper_client.HelperError):
+            return []
 
-    def _offset_for(self, inode: str, path: Path) -> int:
+    def _offset_for(self, inode: str, size: int) -> int:
         row = db.query_one("SELECT offset FROM log_files WHERE inode=?", (inode,))
         if row is None:
             return 0
         offset = int(row["offset"])
-        try:
-            if offset > path.stat().st_size:
-                return 0
-        except OSError:
+        if offset > size:
             return 0
         return offset
+
+    def _consume(self, items: list[dict], events: list[dict], sessions: list[dict]) -> None:
+        for item in items:
+            inode = str(item.get("inode") or "")
+            size = int(item.get("size") or 0)
+            if not inode:
+                continue
+            offset = self._offset_for(inode, size)
+            while offset < size:
+                try:
+                    chunk = helper_client.call(
+                        "logs.read", timeout=15, inode=inode, offset=offset, max_bytes=1024 * 1024
+                    )
+                except (helper_client.HelperUnavailable, helper_client.HelperError):
+                    break
+                data = base64.b64decode(chunk.get("data") or "")
+                if not data:
+                    break
+                complete = data.split(b"\n")
+                tail = complete.pop() if complete and not data.endswith(b"\n") else b""
+                consumed = len(data) - len(tail)
+                for raw in complete:
+                    if not raw.strip():
+                        continue
+                    try:
+                        obj = json.loads(raw.decode("utf-8", "replace"))
+                    except ValueError:
+                        continue
+                    text = obj.get("log", "")
+                    entry_ts = obj.get("time") or db.now_iso()
+                    parsed = parse_message(text, entry_ts)
+                    if not parsed:
+                        continue
+                    events.append(parsed["event"])
+                    if parsed["session"]:
+                        sessions.append(parsed["session"])
+                    banner = VERSION_BANNER_RE.search(parsed["event"]["message"])
+                    if banner:
+                        db.set_meta("proxy_version", banner.group(1))
+                if consumed <= 0:
+                    # A single line larger than the chunk limit: stop rather than loop.
+                    break
+                offset += consumed
+                db.execute(
+                    "INSERT INTO log_files(inode,path,offset) VALUES(?,?,?) "
+                    "ON CONFLICT(inode) DO UPDATE SET offset=excluded.offset, path=excluded.path",
+                    (inode, str(item.get("name") or ""), offset),
+                )
+                if offset >= size:
+                    break
 
     def ingest(self) -> tuple[int, int]:
         events: list[dict] = []
         sessions: list[dict] = []
-        for path in self._log_files():
-            try:
-                st = path.stat()
-            except OSError:
-                continue
-            inode = str(st.st_ino)
-            offset = self._offset_for(inode, path)
-            try:
-                with open(path, "rb") as fh:
-                    fh.seek(offset)
-                    data = fh.read()
-            except OSError:
-                continue
-            if not data:
-                continue
-            complete = data.split(b"\n")
-            # The last chunk is not newline-terminated: leave it for the next pass.
-            tail = complete.pop() if complete and not data.endswith(b"\n") else b""
-            consumed = len(data) - len(tail)
-            for raw in complete:
-                if not raw.strip():
-                    continue
-                try:
-                    obj = json.loads(raw.decode("utf-8", "replace"))
-                except ValueError:
-                    continue
-                text = obj.get("log", "")
-                entry_ts = obj.get("time") or db.now_iso()
-                parsed = parse_message(text, entry_ts)
-                if not parsed:
-                    continue
-                events.append(parsed["event"])
-                if parsed["session"]:
-                    sessions.append(parsed["session"])
-                banner = VERSION_BANNER_RE.search(parsed["event"]["message"])
-                if banner:
-                    db.set_meta("proxy_version", banner.group(1))
-            new_offset = offset + consumed
-            db.execute(
-                "INSERT INTO log_files(inode,path,offset) VALUES(?,?,?) "
-                "ON CONFLICT(inode) DO UPDATE SET offset=excluded.offset, path=excluded.path",
-                (inode, str(path), new_offset),
-            )
+        self._consume(self._log_files(), events, sessions)
         nev = db.bulk_insert_events(events)
         ns = db.bulk_insert_sessions(sessions)
         return nev, ns
 
     def reset_for_new_container(self) -> None:
-        """Nothing to do: offsets are keyed by inode, a new container has new files."""
         self._last_container = None
 
 

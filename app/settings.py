@@ -89,3 +89,15 @@ JOURNAL_MAX_MB = 100
 
 # Interface used for passive TCP SYN fingerprinting (device hints).
 SNIFF_IFACE = _env("TGWS_SNIFF_IFACE", "eth0")
+
+# Privilege separation: the panel talks to these two Unix sockets only.
+HELPER_SOCKET = Path(_env("TGWS_HELPER_SOCKET", "/run/tgws-panel/helper.sock"))
+NETMON_SOCKET = Path(_env("TGWS_NETMON_SOCKET", "/run/tgws-panel-netmon/netmon.sock"))
+HELPER_TIMEOUT = _env_int("TGWS_HELPER_TIMEOUT", 30)
+HELPER_MAX_RESPONSE = _env_int("TGWS_HELPER_MAX_RESPONSE", 100 * 1024 * 1024)
+NETMON_TIMEOUT = 5
+NETMON_INTERVAL = 5
+DOCKER_CONTAINERS_DIR = Path(_env("TGWS_DOCKER_CONTAINERS_DIR", "/var/lib/docker/containers"))
+HELPER_MAX_REQUEST = 256 * 1024
+HELPER_BACKUP_MAX_BYTES = 64 * 1024 * 1024
+HELPER_REQUIRE_CGROUP = _env("TGWS_HELPER_REQUIRE_CGROUP", "1") not in ("0", "false", "no")

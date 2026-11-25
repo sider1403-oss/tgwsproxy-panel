@@ -5,7 +5,7 @@ import { api } from '../lib/api'
 import { fmtDate } from '../lib/format'
 import { Badge, Button, Card, ConfirmDialog, CopyBtn, Dialog, Empty, Field, Input, useToast } from '../components/ui'
 
-type Pending = { type: 'disable' | 'delete'; key: KeyItem } | null
+type Pending = { type: 'disable' | 'enable' | 'delete'; key: KeyItem } | null
 type Revealed = { key: string; masked: string; link_lan: string | null; link_external: string | null }
 
 export default function Keys() {
@@ -18,6 +18,7 @@ export default function Keys() {
   const [newLinkLan, setNewLinkLan] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<Pending>(null)
+  const [confirmAdd, setConfirmAdd] = useState(false)
   const [commentEdit, setCommentEdit] = useState<KeyItem | null>(null)
   const [commentText, setCommentText] = useState('')
   const [statsKey, setStatsKey] = useState<KeyItem | null>(null)
@@ -87,6 +88,7 @@ export default function Keys() {
       push('bad', e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
+      setPending(null)
     }
   }
 
@@ -291,7 +293,7 @@ export default function Keys() {
                 <span className="text-xs text-muted">{k.comment || 'без комментария'}</span>
                 <Badge tone="warn">отключён</Badge>
                 <div className="ml-auto flex gap-2">
-                  <Button className="!px-2.5 !py-1.5 text-xs" onClick={() => void doEnable(k)} loading={busy}>
+                  <Button className="!px-2.5 !py-1.5 text-xs" onClick={() => setPending({ type: 'enable', key: k })} loading={busy}>
                     <Power className="h-3.5 w-3.5" /> Включить
                   </Button>
                   <Button variant="danger" className="!px-2 !py-1.5 text-xs" onClick={() => setPending({ type: 'delete', key: k })}>
@@ -311,7 +313,7 @@ export default function Keys() {
         footer={
           <>
             <Button onClick={() => setAddOpen(false)}>Закрыть</Button>
-            <Button variant="primary" onClick={() => void doAdd()} loading={busy} disabled={!!newLink}>
+            <Button variant="primary" onClick={() => setConfirmAdd(true)} loading={busy} disabled={!!newLink}>
               Создать
             </Button>
           </>
@@ -437,24 +439,56 @@ export default function Keys() {
 
       <ConfirmDialog
         open={!!pending}
-        title={pending?.type === 'disable' ? 'Отключить ключ?' : 'Удалить ключ?'}
+        title={
+          pending?.type === 'disable'
+            ? 'Отключить ключ?'
+            : pending?.type === 'enable'
+              ? 'Включить ключ?'
+              : 'Удалить ключ?'
+        }
         text={
           pending?.type === 'disable' ? (
             <>Ключ <span className="font-mono">{pending?.key.masked}</span> будет удалён из TG_SECRET, контейнер перезапустится.
               Клиенты с этим ключом потеряют доступ. Ключ останется в списке отключённых и его можно вернуть.</>
+          ) : pending?.type === 'enable' ? (
+            <>Ключ <span className="font-mono">{pending?.key.masked}</span> будет добавлен в TG_SECRET, контейнер перезапустится.
+              Активные сессии кратковременно прервутся.</>
           ) : (
             <>Ключ <span className="font-mono">{pending?.key.masked}</span> будет удалён из конфигурации без возможности восстановления
               через панель (останется в резервной копии). Контейнер перезапустится.</>
           )
         }
         danger={pending?.type === 'delete'}
-        confirmLabel={pending?.type === 'delete' ? 'Удалить' : 'Отключить'}
+        confirmLabel={
+          pending?.type === 'delete' ? 'Удалить' : pending?.type === 'enable' ? 'Включить' : 'Отключить'
+        }
         loading={busy}
         onClose={() => setPending(null)}
         onConfirm={() => {
           if (!pending) return
           if (pending.type === 'disable') void doDisable(pending.key)
+          else if (pending.type === 'enable') void doEnable(pending.key)
           else void doDelete(pending.key)
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmAdd}
+        title="Создать ключ и пересоздать контейнер?"
+        text={
+          <>
+            Новый ключ будет добавлен в <span className="font-mono">TG_SECRET</span>, после чего панель выполнит
+            <span className="font-mono"> docker compose up -d</span>. Контейнер прокси будет пересоздан, активные
+            сессии кратковременно прервутся (несколько секунд).
+          </>
+        }
+        confirmLabel="Создать ключ"
+        danger
+        loading={busy}
+        onClose={() => setConfirmAdd(false)}
+        onConfirm={() => {
+          setConfirmAdd(false)
+          void doAdd()
         }}
       />
     </div>

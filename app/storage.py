@@ -6,7 +6,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import dockerctl, settings
+from . import helper_client, settings
 
 
 def _dir_size(path: Path) -> int:
@@ -40,34 +40,11 @@ def _panel_logs() -> tuple[int, list[dict]]:
     return total, items
 
 
-def _backups() -> tuple[int, int]:
+def _helper_stats() -> dict:
     try:
-        dirs = [d for d in settings.BACKUP_DIR.iterdir() if d.is_dir()]
-    except OSError:
-        return 0, 0
-    return len(dirs), sum(_dir_size(d) for d in dirs)
-
-
-def _docker_logs() -> tuple[int, int]:
-    info = dockerctl.inspect_container()
-    if not info:
-        return 0, 0
-    log_path = info.get("LogPath")
-    if not log_path:
-        return 0, 0
-    base = Path(log_path)
-    total = 0
-    files = 0
-    try:
-        candidates = [base, *base.parent.glob(base.name + ".*")]
-    except OSError:
-        candidates = [base]
-    for path in candidates:
-        size = _file_size(path)
-        if size:
-            total += size
-            files += 1
-    return total, files
+        return helper_client.call("storage.stats", timeout=15)
+    except (helper_client.HelperUnavailable, helper_client.HelperError):
+        return {"docker_log": {"bytes": 0, "files": 0}, "backups": {"count": 0, "bytes": 0}}
 
 
 def snapshot() -> dict:
@@ -75,8 +52,11 @@ def snapshot() -> dict:
     db_wal = _file_size(Path(str(settings.DB_PATH) + "-wal"))
     db_shm = _file_size(Path(str(settings.DB_PATH) + "-shm"))
     log_total, log_files = _panel_logs()
-    backup_count, backup_bytes = _backups()
-    docker_total, docker_count = _docker_logs()
+    remote = _helper_stats()
+    docker_total = int((remote.get("docker_log") or {}).get("bytes") or 0)
+    docker_count = int((remote.get("docker_log") or {}).get("files") or 0)
+    backup_count = int((remote.get("backups") or {}).get("count") or 0)
+    backup_bytes = int((remote.get("backups") or {}).get("bytes") or 0)
     disk = shutil.disk_usage("/")
     return {
         "db": {"main": db_main, "wal": db_wal, "shm": db_shm, "total": db_main + db_wal + db_shm},

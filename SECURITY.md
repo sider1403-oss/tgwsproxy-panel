@@ -2,8 +2,18 @@
 
 ## Deployment model
 
-The panel is an administrative tool. It runs as **root** (it needs Docker, `nsenter` and a
-raw socket for device fingerprinting) and is intended for a trusted LAN.
+The panel is an administrative tool for a trusted LAN. The FastAPI process runs as the
+unprivileged system user `tgws-panel` and has **no** root, Docker Socket, `sudo` or `docker`
+group access. Privileged work is split into two small services:
+
+- `tgws-panel-helper` (root, Unix socket, `SO_PEERCRED`) exposes only a fixed allowlist:
+  container status/logs/start/stop/restart/version for `tgwsproxy`, `nsenter`/`ss`,
+  configuration apply/restore, backups and Docker-log chunks. There is no generic command
+  execution and no way to address another container.
+- `tgws-panel-netmon` (user `tgws-netmon`, `CAP_NET_RAW`) captures TCP SYN fingerprints
+  and has no access to Docker, `.env`, the panel database or proxy configuration.
+
+The panel listens on `0.0.0.0:8090` but must stay LAN-only (or behind a TLS reverse proxy).
 
 Since v1.1.0 the panel requires a login:
 
