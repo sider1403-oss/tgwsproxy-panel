@@ -100,9 +100,9 @@ api() { curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.
 
 resolve_version() {
   [ -n "$VERSION" ] && return 0
-  VERSION="$(api releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
+  VERSION="$(api releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1 || true)"
   if [ -z "$VERSION" ]; then
-    VERSION="$(api 'tags?per_page=1' | sed -n 's/.*"name": *"\(v[0-9][^"]*\)".*/\1/p' | head -n1)"
+    VERSION="$(api 'tags?per_page=1' | sed -n 's/.*"name": *"\(v[0-9][^"]*\)".*/\1/p' | head -n1 || true)"
   fi
   if [ -z "$VERSION" ]; then
     VERSION="main"
@@ -132,7 +132,7 @@ fetch_source() {
   fi
   curl -fsSL "$url" -o "$SRC_DIR/src.tar.gz" || die "cannot download $url"
   tar xzf "$SRC_DIR/src.tar.gz" -C "$SRC_DIR"
-  dir="$(find "$SRC_DIR" -maxdepth 1 -mindepth 1 -type d -name "$REPO_NAME-*" | head -n1)"
+  dir="$(find "$SRC_DIR" -maxdepth 1 -mindepth 1 -type d -name "$REPO_NAME-*" | head -n1 || true)"
   [ -n "$dir" ] || die "cannot find extracted source in $SRC_DIR"
   rm -f "$SRC_DIR/src.tar.gz"
   SRC_DIR="$dir"
@@ -230,12 +230,19 @@ setup_dirs() {
 
 detect_host() {
   [ -n "$PUBLIC_HOST" ] && return 0
-  PUBLIC_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  PUBLIC_HOST="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
   [ -n "$PUBLIC_HOST" ] || PUBLIC_HOST="127.0.0.1"
 }
 
 detect_iface() {
-  ip route 2>/dev/null | awk '/^default/ {print $5; exit}'
+  local out=""
+  if command -v ip >/dev/null 2>&1; then
+    out="$(ip route 2>/dev/null | awk '/^default/ {print $5; exit}' || true)"
+  fi
+  if [ -z "$out" ]; then
+    out="$(awk '$2 == "00000000" {print $1; exit}' /proc/net/route 2>/dev/null || true)"
+  fi
+  printf '%s' "$out"
 }
 
 setup_env() {
